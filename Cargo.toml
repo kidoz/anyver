@@ -1,0 +1,12 @@
+[package]
+name = "anyver"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+
+[lib]
+name = "anyver"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.28"

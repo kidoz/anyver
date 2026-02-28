@@ -1,0 +1,18 @@
+[build-system]
+requires = ["maturin>=1.12,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "anyver"
+description = "High-performance version string parsing and comparison across all major package ecosystems"
+authors = [{name = "Aleksandr Pavlov", email = "ckidoz@gmail.com"}]
+license = {text = "MIT"}
+readme = "README.md"
+keywords = ["version", "semver", "pep440", "parsing", "comparison"]
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dynamic = ["version"]

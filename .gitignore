@@ -1,0 +1,11 @@
+/target
+__pycache__/
+*.so
+*.dylib
+*.pyd
+.venv/
+.pytest_cache/
+.idea/
+.DS_Store
+/test_anyver_rpm
+/test_parse
