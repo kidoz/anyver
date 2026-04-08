@@ -48,11 +48,7 @@ fn is_postrelease_tag(s: &str) -> bool {
 
 fn strip_v(s: &str) -> &str {
     let b = s.as_bytes();
-    if b.len() > 1 && (b[0] == b'v' || b[0] == b'V') && b[1].is_ascii_digit() {
-        &s[1..]
-    } else {
-        s
-    }
+    if b.len() > 1 && (b[0] == b'v' || b[0] == b'V') && b[1].is_ascii_digit() { &s[1..] } else { s }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -97,8 +93,7 @@ impl Ecosystem {
             "alpine" | "apk" => Ok(Self::Alpine),
             "docker" | "oci" => Ok(Self::Docker),
             other => Err(PyValueError::new_err(format!(
-                "unsupported ecosystem '{}'; expected one of: generic, semver, pep440, debian, rpm, ruby, maven, go, npm, nuget, composer, crates, hex, swift, calver, alpine, docker",
-                other
+                "unsupported ecosystem '{other}'; expected one of: generic, semver, pep440, debian, rpm, ruby, maven, go, npm, nuget, composer, crates, hex, swift, calver, alpine, docker"
             ))),
         }
     }
@@ -357,14 +352,15 @@ fn text_effective_weight(s: &str) -> i32 {
     tag_weight(s).unwrap_or(29)
 }
 
-fn cmp_segments(a: &[Seg], b: &[Seg]) -> Ordering {
+#[allow(clippy::many_single_char_names)]
+fn cmp_segments(left: &[Seg], right: &[Seg]) -> Ordering {
     // Normalize: strip trailing Num(0) to ensure transitivity
     // (e.g., 1.0 == 1.0.0 and 1.0 < 1.0.post1 implies 1.0.0 < 1.0.post1)
-    let na = normalized(a);
-    let nb = normalized(b);
-    let n = na.len().max(nb.len());
+    let nl = normalized(left);
+    let nr = normalized(right);
+    let n = nl.len().max(nr.len());
     for i in 0..n {
-        match (na.get(i), nb.get(i)) {
+        match (nl.get(i), nr.get(i)) {
             (None, None) => return Ordering::Equal,
             (None, Some(Seg::Num(v))) => {
                 if *v == 0 {
@@ -378,24 +374,22 @@ fn cmp_segments(a: &[Seg], b: &[Seg]) -> Ordering {
                 }
                 return Ordering::Greater;
             }
-            (None, Some(Seg::Text(s))) => {
-                let w = text_effective_weight(s);
-                if w < 30 {
+            (None, Some(Seg::Text(tag))) => {
+                if text_effective_weight(tag) < 30 {
                     return Ordering::Greater;
                 } // we are release, they pre
                 return Ordering::Less; // they are post
             }
-            (Some(Seg::Text(s)), None) => {
-                let w = text_effective_weight(s);
-                if w < 30 {
+            (Some(Seg::Text(tag)), None) => {
+                if text_effective_weight(tag) < 30 {
                     return Ordering::Less;
                 } // we are pre
                 return Ordering::Greater; // we are post
             }
             (Some(sa), Some(sb)) => {
-                let o = cmp_two(sa, sb);
-                if o != Ordering::Equal {
-                    return o;
+                let ord = cmp_two(sa, sb);
+                if ord != Ordering::Equal {
+                    return ord;
                 }
             }
         }
@@ -404,9 +398,7 @@ fn cmp_segments(a: &[Seg], b: &[Seg]) -> Ordering {
 }
 
 fn cmp_parsed(a: &ParsedVersion, b: &ParsedVersion) -> Ordering {
-    a.epoch
-        .cmp(&b.epoch)
-        .then_with(|| cmp_segments(&a.segments, &b.segments))
+    a.epoch.cmp(&b.epoch).then_with(|| cmp_segments(&a.segments, &b.segments))
 }
 
 #[derive(Debug, Clone)]
@@ -614,26 +606,22 @@ impl VersionStrategy for AlpineStrategy {
 
 fn strategy_for(ecosystem: Ecosystem) -> &'static dyn VersionStrategy {
     match ecosystem {
-        Ecosystem::Generic => &GENERIC_STRATEGY,
-        Ecosystem::Semver => &SEMVER_STRATEGY,
+        Ecosystem::Generic | Ecosystem::Docker => &GENERIC_STRATEGY,
+        Ecosystem::Semver
+        | Ecosystem::Npm
+        | Ecosystem::Crates
+        | Ecosystem::Hex
+        | Ecosystem::Swift => &SEMVER_STRATEGY,
         Ecosystem::Pep440 => &PEP440_STRATEGY,
         Ecosystem::Debian => &DEBIAN_STRATEGY,
         Ecosystem::Rpm => &RPM_STRATEGY,
         Ecosystem::Ruby => &RUBY_STRATEGY,
         Ecosystem::Maven => &MAVEN_STRATEGY,
         Ecosystem::Go => &GO_STRATEGY,
-        // SemVer-based ecosystems delegate to SemVer strategy
-        Ecosystem::Npm => &SEMVER_STRATEGY,
-        Ecosystem::Crates => &SEMVER_STRATEGY,
-        Ecosystem::Hex => &SEMVER_STRATEGY,
-        Ecosystem::Swift => &SEMVER_STRATEGY,
-        // Generic-based ecosystems with format validation
         Ecosystem::Nuget => &NUGET_STRATEGY,
         Ecosystem::Composer => &COMPOSER_STRATEGY,
         Ecosystem::Calver => &CALVER_STRATEGY,
         Ecosystem::Alpine => &ALPINE_STRATEGY,
-        // Docker has no formal versioning — use generic without validation
-        Ecosystem::Docker => &GENERIC_STRATEGY,
     }
 }
 
@@ -666,10 +654,7 @@ impl PyVersion {
         } else {
             Ecosystem::from_str(ecosystem)?
         };
-        Ok(PyVersion {
-            inner: parse(version),
-            eco,
-        })
+        Ok(PyVersion { inner: parse(version), eco })
     }
 
     fn __richcmp__(&self, other: &PyVersion, op: CompareOp) -> bool {
@@ -696,13 +681,13 @@ impl PyVersion {
         self.inner.segments.len()
     }
 
+    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
     fn __getitem__<'py>(&self, py: Python<'py>, idx: isize) -> PyResult<Bound<'py, PyAny>> {
         let len = self.inner.segments.len() as isize;
         let real_idx = if idx < 0 { len + idx } else { idx };
         if real_idx < 0 || real_idx >= len {
             return Err(PyIndexError::new_err(format!(
-                "segment index {} out of range (version has {} segments)",
-                idx, len
+                "segment index {idx} out of range (version has {len} segments)"
             )));
         }
         Ok(self.inner.segments[real_idx as usize].to_py(py))
@@ -877,13 +862,15 @@ impl PyVersion {
             .into_any())
         };
 
+        #[allow(clippy::cast_possible_wrap)]
         tuples.push(mk_tuple(py, 2, self.inner.epoch as i64, "")?);
 
         for seg in prefix.iter().chain(suffix.iter()) {
+            #[allow(clippy::cast_possible_wrap)]
             let t = match seg {
                 Seg::Num(n) => mk_tuple(py, 2, *n as i64, "")?,
                 Seg::Text(s) => {
-                    let w = tag_weight(s).unwrap_or(29) as i64;
+                    let w = i64::from(tag_weight(s).unwrap_or(29));
                     mk_tuple(py, 1, w, s)?
                 }
             };
@@ -991,20 +978,12 @@ fn batch_compare(
     ecosystem: &str,
 ) -> PyResult<Vec<i32>> {
     let is_auto = ecosystem.eq_ignore_ascii_case("auto");
-    let base_eco = if !is_auto {
-        Ecosystem::from_str(ecosystem)?
-    } else {
-        Ecosystem::Generic
-    };
+    let base_eco = if is_auto { Ecosystem::Generic } else { Ecosystem::from_str(ecosystem)? };
 
     pairs
         .iter()
         .map(|(a, b)| {
-            let eco = if is_auto {
-                resolve_eco_for_obj("auto", a)?
-            } else {
-                base_eco
-            };
+            let eco = if is_auto { resolve_eco_for_obj("auto", a)? } else { base_eco };
             let pa = extract_parsed_for_ecosystem(a, eco)?;
             let pb = extract_parsed_for_ecosystem(b, eco)?;
             Ok(match compare_for_ecosystem(eco, &pa, &pb) {
@@ -1103,10 +1082,8 @@ fn min_version<'py>(
             Ok((p, obj))
         })
         .collect::<PyResult<Vec<_>>>()?;
-    let (_, min_obj) = parsed
-        .into_iter()
-        .min_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0))
-        .unwrap();
+    let (_, min_obj) =
+        parsed.into_iter().min_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0)).unwrap();
     Ok(min_obj)
 }
 
@@ -1149,13 +1126,12 @@ struct RpmVersion {
 
 fn parse_strict_u64(s: &str, label: &str) -> Result<u64, String> {
     if s.is_empty() {
-        return Err(format!("empty {}", label));
+        return Err(format!("empty {label}"));
     }
     if s.len() > 1 && s.starts_with('0') {
-        return Err(format!("leading zero in {}: '{}'", label, s));
+        return Err(format!("leading zero in {label}: '{s}'"));
     }
-    s.parse::<u64>()
-        .map_err(|_| format!("invalid {}: '{}'", label, s))
+    s.parse::<u64>().map_err(|_| format!("invalid {label}: '{s}'"))
 }
 
 fn validate_prerelease(pre: &str) -> Result<(), String> {
@@ -1166,27 +1142,15 @@ fn validate_prerelease(pre: &str) -> Result<(), String> {
         if ident.is_empty() {
             return Err("empty identifier in prerelease".to_string());
         }
-        if !ident
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        {
-            return Err(format!(
-                "invalid character in prerelease identifier: '{}'",
-                ident
-            ));
+        if !ident.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return Err(format!("invalid character in prerelease identifier: '{ident}'"));
         }
         let is_numeric = ident.bytes().all(|b| b.is_ascii_digit());
         if is_numeric && ident.len() > 1 && ident.starts_with('0') {
-            return Err(format!(
-                "leading zero in numeric prerelease identifier: '{}'",
-                ident
-            ));
+            return Err(format!("leading zero in numeric prerelease identifier: '{ident}'"));
         }
         if is_numeric && ident.parse::<u64>().is_err() {
-            return Err(format!(
-                "numeric prerelease identifier out of range for u64: '{}'",
-                ident
-            ));
+            return Err(format!("numeric prerelease identifier out of range for u64: '{ident}'"));
         }
     }
     Ok(())
@@ -1212,45 +1176,41 @@ fn parse_semver_strict(input: &str) -> Result<SemVer, String> {
     if let Some(ref p) = pre {
         validate_prerelease(p)?;
     }
-    Ok(SemVer {
-        major,
-        minor,
-        patch,
-        pre,
-    })
+    Ok(SemVer { major, minor, patch, pre })
 }
 
-fn cmp_semver_strict(a: &SemVer, b: &SemVer) -> Ordering {
-    let core = a
+#[allow(clippy::many_single_char_names)]
+fn cmp_semver_strict(left: &SemVer, right: &SemVer) -> Ordering {
+    let core = left
         .major
-        .cmp(&b.major)
-        .then(a.minor.cmp(&b.minor))
-        .then(a.patch.cmp(&b.patch));
+        .cmp(&right.major)
+        .then(left.minor.cmp(&right.minor))
+        .then(left.patch.cmp(&right.patch));
     if core != Ordering::Equal {
         return core;
     }
-    match (&a.pre, &b.pre) {
+    match (&left.pre, &right.pre) {
         (None, None) => Ordering::Equal,
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
-        (Some(ap), Some(bp)) => {
-            let aa: Vec<&str> = ap.split('.').collect();
-            let bb: Vec<&str> = bp.split('.').collect();
-            let n = aa.len().max(bb.len());
-            for i in 0..n {
-                match (aa.get(i), bb.get(i)) {
+        (Some(lp), Some(rp)) => {
+            let left_parts: Vec<&str> = lp.split('.').collect();
+            let right_parts: Vec<&str> = rp.split('.').collect();
+            let count = left_parts.len().max(right_parts.len());
+            for i in 0..count {
+                match (left_parts.get(i), right_parts.get(i)) {
                     (None, Some(_)) => return Ordering::Less,
                     (Some(_), None) => return Ordering::Greater,
                     (None, None) => return Ordering::Equal,
-                    (Some(x), Some(y)) => {
-                        let o = match (x.parse::<u64>(), y.parse::<u64>()) {
-                            (Ok(na), Ok(nb)) => na.cmp(&nb),
+                    (Some(lv), Some(rv)) => {
+                        let ord = match (lv.parse::<u64>(), rv.parse::<u64>()) {
+                            (Ok(ln), Ok(rn)) => ln.cmp(&rn),
                             (Ok(_), Err(_)) => Ordering::Less,
                             (Err(_), Ok(_)) => Ordering::Greater,
-                            (Err(_), Err(_)) => x.cmp(y),
+                            (Err(_), Err(_)) => lv.cmp(rv),
                         };
-                        if o != Ordering::Equal {
-                            return o;
+                        if ord != Ordering::Equal {
+                            return ord;
                         }
                     }
                 }
@@ -1270,7 +1230,7 @@ fn validate_pep440(input: &str) -> Result<(), String> {
     let after_epoch = if let Some(pos) = s.find('!') {
         let epoch_str = &s[..pos];
         if epoch_str.is_empty() || !epoch_str.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(format!("invalid PEP 440 epoch: '{}'", epoch_str));
+            return Err(format!("invalid PEP 440 epoch: '{epoch_str}'"));
         }
         &s[pos + 1..]
     } else {
@@ -1282,13 +1242,10 @@ fn validate_pep440(input: &str) -> Result<(), String> {
         None => after_epoch,
     };
     if ver_part.is_empty() {
-        return Err(format!("empty PEP 440 version: '{}'", input));
+        return Err(format!("empty PEP 440 version: '{input}'"));
     }
     if !ver_part.as_bytes()[0].is_ascii_digit() {
-        return Err(format!(
-            "PEP 440 version must start with a digit: '{}'",
-            input
-        ));
+        return Err(format!("PEP 440 version must start with a digit: '{input}'"));
     }
     Ok(())
 }
@@ -1323,11 +1280,7 @@ fn parse_debian(input: &str) -> Result<DebianVersion, String> {
         Some(pos) => (rest[..pos].to_string(), rest[pos + 1..].to_string()),
         None => (rest.to_string(), String::new()),
     };
-    Ok(DebianVersion {
-        epoch,
-        upstream,
-        revision,
-    })
+    Ok(DebianVersion { epoch, upstream, revision })
 }
 
 fn dpkg_order(c: Option<u8>) -> i32 {
@@ -1335,8 +1288,8 @@ fn dpkg_order(c: Option<u8>) -> i32 {
         None => 0,
         Some(b'~') => -1,
         Some(c) if c.is_ascii_digit() => 0,
-        Some(c) if c.is_ascii_alphabetic() => c as i32,
-        Some(c) => c as i32 + 256,
+        Some(c) if c.is_ascii_alphabetic() => i32::from(c),
+        Some(c) => i32::from(c) + 256,
     }
 }
 
@@ -1377,7 +1330,7 @@ fn verrevcmp(a: &[u8], b: &[u8]) -> Ordering {
         let mut first_diff = 0i32;
         while ia < a.len() && a[ia].is_ascii_digit() && ib < b.len() && b[ib].is_ascii_digit() {
             if first_diff == 0 {
-                first_diff = a[ia] as i32 - b[ib] as i32;
+                first_diff = i32::from(a[ia]) - i32::from(b[ib]);
             }
             ia += 1;
             ib += 1;
@@ -1389,11 +1342,7 @@ fn verrevcmp(a: &[u8], b: &[u8]) -> Ordering {
             return Ordering::Less;
         }
         if first_diff != 0 {
-            return if first_diff > 0 {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            };
+            return if first_diff > 0 { Ordering::Greater } else { Ordering::Less };
         }
     }
     Ordering::Equal
@@ -1421,11 +1370,7 @@ fn parse_rpm(input: &str) -> Result<RpmVersion, String> {
         Some(pos) => (rest[..pos].to_string(), rest[pos + 1..].to_string()),
         None => (rest.to_string(), String::new()),
     };
-    Ok(RpmVersion {
-        epoch,
-        version,
-        release,
-    })
+    Ok(RpmVersion { epoch, version, release })
 }
 
 fn rpmverscmp(a: &str, b: &str) -> Ordering {
@@ -1506,11 +1451,7 @@ fn rpmverscmp(a: &str, b: &str) -> Ordering {
 
         // If b run is empty, type mismatch — digits always win
         if sb == ib {
-            return if is_num {
-                Ordering::Greater
-            } else {
-                Ordering::Less
-            };
+            return if is_num { Ordering::Greater } else { Ordering::Less };
         }
 
         if is_num {
@@ -1570,10 +1511,7 @@ fn validate_ruby(input: &str) -> Result<(), String> {
         return Err("empty Ruby gem version".to_string());
     }
     if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!(
-            "Ruby gem version must start with a digit: '{}'",
-            input
-        ));
+        return Err(format!("Ruby gem version must start with a digit: '{input}'"));
     }
     Ok(())
 }
@@ -1584,10 +1522,7 @@ fn validate_maven(input: &str) -> Result<(), String> {
         return Err("empty Maven version".to_string());
     }
     if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!(
-            "Maven version must start with a digit: '{}'",
-            input
-        ));
+        return Err(format!("Maven version must start with a digit: '{input}'"));
     }
     Ok(())
 }
@@ -1598,10 +1533,7 @@ fn validate_nuget(input: &str) -> Result<(), String> {
         return Err("empty NuGet version".to_string());
     }
     if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!(
-            "NuGet version must start with a digit: '{}'",
-            input
-        ));
+        return Err(format!("NuGet version must start with a digit: '{input}'"));
     }
     Ok(())
 }
@@ -1612,10 +1544,7 @@ fn validate_composer(input: &str) -> Result<(), String> {
         return Err("empty Composer version".to_string());
     }
     if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!(
-            "Composer version must start with a digit: '{}'",
-            input
-        ));
+        return Err(format!("Composer version must start with a digit: '{input}'"));
     }
     Ok(())
 }
@@ -1626,10 +1555,7 @@ fn validate_calver(input: &str) -> Result<(), String> {
         return Err("empty CalVer version".to_string());
     }
     if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!(
-            "CalVer version must start with a digit: '{}'",
-            input
-        ));
+        return Err(format!("CalVer version must start with a digit: '{input}'"));
     }
     Ok(())
 }
@@ -1640,10 +1566,7 @@ fn validate_alpine(input: &str) -> Result<(), String> {
         return Err("empty Alpine version".to_string());
     }
     if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!(
-            "Alpine version must start with a digit: '{}'",
-            input
-        ));
+        return Err(format!("Alpine version must start with a digit: '{input}'"));
     }
     Ok(())
 }
@@ -1924,6 +1847,7 @@ mod tests {
 
     // --- Maven ---
 
+    // ---- Qualifier ordering (spec §8) ----
     #[test]
     fn test_maven_alpha_lt_beta() {
         assert_eq!(cmpg("1.0-alpha-1", "1.0-beta-1"), Less);
@@ -1939,6 +1863,579 @@ mod tests {
     #[test]
     fn test_maven_rel_lt_sp() {
         assert_eq!(cmpg("1.0", "1.0-sp-1"), Less);
+    }
+    #[test]
+    fn test_maven_alpha_lt_milestone() {
+        assert_eq!(cmpg("1.0-alpha", "1.0-milestone"), Less);
+    }
+    #[test]
+    fn test_maven_milestone_lt_rc() {
+        assert_eq!(cmpg("1.0-milestone-1", "1.0-rc-1"), Less);
+    }
+    #[test]
+    fn test_maven_rc_lt_snapshot() {
+        assert_eq!(cmpg("1.0-rc-1", "1.0-SNAPSHOT"), Less);
+    }
+    #[test]
+    fn test_maven_cr_eq_rc() {
+        assert_eq!(cmpg("1.0-cr-1", "1.0-rc-1"), Equal);
+    }
+    #[test]
+    fn test_maven_full_qualifier_chain() {
+        // alpha < beta < milestone < rc < snapshot < release < sp
+        let chain = [
+            "1.0-alpha-1",
+            "1.0-beta-1",
+            "1.0-milestone-1",
+            "1.0-rc-1",
+            "1.0-SNAPSHOT",
+            "1.0",
+            "1.0-sp-1",
+        ];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "{} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Qualifier aliases (a/b/m/cr) ----
+    #[test]
+    fn test_maven_a_alias_alpha() {
+        assert_eq!(cmpg("1.0-a", "1.0-alpha"), Equal);
+    }
+    #[test]
+    fn test_maven_b_alias_beta() {
+        assert_eq!(cmpg("1.0-b", "1.0-beta"), Equal);
+    }
+    #[test]
+    fn test_maven_m_alias_milestone() {
+        assert_eq!(cmpg("1.0-m", "1.0-milestone"), Equal);
+    }
+    #[test]
+    fn test_maven_cr_alias_rc() {
+        assert_eq!(cmpg("1.0-cr", "1.0-rc"), Equal);
+    }
+    #[test]
+    fn test_maven_a1_alias_alpha1() {
+        assert_eq!(cmpg("1-a1", "1-alpha-1"), Equal);
+    }
+    #[test]
+    fn test_maven_b2_alias_beta2() {
+        assert_eq!(cmpg("1-b2", "1-beta-2"), Equal);
+    }
+    #[test]
+    fn test_maven_m3_alias_milestone3() {
+        assert_eq!(cmpg("1-m3", "1-milestone-3"), Equal);
+    }
+
+    // ---- Case insensitivity ----
+    #[test]
+    fn test_maven_case_insensitive_snapshot() {
+        assert_eq!(cmpg("1.0-SNAPSHOT", "1.0-snapshot"), Equal);
+    }
+    #[test]
+    fn test_maven_case_insensitive_alpha() {
+        assert_eq!(cmpg("1.0-ALPHA", "1.0-alpha"), Equal);
+    }
+    #[test]
+    fn test_maven_case_insensitive_rc() {
+        assert_eq!(cmpg("1.0-RC-1", "1.0-rc-1"), Equal);
+    }
+    #[test]
+    fn test_maven_case_insensitive_cr() {
+        assert_eq!(cmpg("1.0-CR-1", "1.0-cr-1"), Equal);
+    }
+    #[test]
+    fn test_maven_mixed_case_alphabet() {
+        assert_eq!(cmpg("1-abcdefghijklmnopqrstuvwxyz", "1-ABCDEFGHIJKLMNOPQRSTUVWXYZ"), Equal);
+    }
+
+    // ---- Trailing zero equivalence ----
+    #[test]
+    fn test_maven_trailing_zeros_2() {
+        assert_eq!(cmpg("1.0", "1.0.0"), Equal);
+    }
+    #[test]
+    fn test_maven_trailing_zeros_3() {
+        assert_eq!(cmpg("1", "1.0.0"), Equal);
+    }
+    #[test]
+    fn test_maven_trailing_zeros_many() {
+        assert_eq!(cmpg("1.0.0.0.0.0.0", "1"), Equal);
+    }
+
+    // ---- Basic numeric ordering ----
+    #[test]
+    fn test_maven_numeric_1_lt_2() {
+        assert_eq!(cmpg("1", "2"), Less);
+    }
+    #[test]
+    fn test_maven_numeric_1_5_lt_2() {
+        assert_eq!(cmpg("1.5", "2"), Less);
+    }
+    #[test]
+    fn test_maven_numeric_minor_order() {
+        assert_eq!(cmpg("1.0", "1.1"), Less);
+    }
+    #[test]
+    fn test_maven_numeric_patch_order() {
+        assert_eq!(cmpg("1.0.0", "1.0.1"), Less);
+    }
+    #[test]
+    fn test_maven_numeric_1_0_1_lt_1_1() {
+        assert_eq!(cmpg("1.0.1", "1.1"), Less);
+    }
+    #[test]
+    fn test_maven_numeric_1_1_lt_1_2_0() {
+        assert_eq!(cmpg("1.1", "1.2.0"), Less);
+    }
+
+    // ---- Pre-release before release ----
+    #[test]
+    fn test_maven_alpha_before_release() {
+        assert_eq!(cmpg("1.0-alpha-1", "1.0"), Less);
+    }
+    #[test]
+    fn test_maven_alpha_snapshot_lt_alpha() {
+        assert_eq!(cmpg("1.0-alpha-1-SNAPSHOT", "1.0-alpha-1"), Less);
+    }
+    #[test]
+    fn test_maven_alpha1_lt_alpha2() {
+        assert_eq!(cmpg("1.0-alpha-1", "1.0-alpha-2"), Less);
+    }
+    #[test]
+    fn test_maven_beta1_lt_snapshot() {
+        assert_eq!(cmpg("1.0-beta-1", "1.0-SNAPSHOT"), Less);
+    }
+
+    // ---- Post-release / sp ----
+    #[test]
+    fn test_maven_release_lt_post_numeric() {
+        assert_eq!(cmpg("1.0", "1.0.1"), Less);
+    }
+    #[test]
+    fn test_maven_sp1_lt_sp2() {
+        assert_eq!(cmpg("1.0-sp-1", "1.0-sp-2"), Less);
+    }
+
+    // ---- Unknown qualifiers ----
+    #[test]
+    fn test_maven_unknown_qualifier_lexical_order() {
+        assert_eq!(cmpg("2.0.1-klm", "2.0.1-lmn"), Less);
+    }
+
+    // ---- Real-world: Apache Maven Core lifecycle ----
+    #[test]
+    fn test_maven_rw_maven_core_alpha_chain() {
+        let chain = [
+            "2.0-alpha-1",
+            "2.0-alpha-2",
+            "2.0-alpha-3",
+            "2.0-beta-1",
+            "2.0-beta-2",
+            "2.0-beta-3",
+            "2.0",
+            "2.0.1",
+            "2.0.2",
+            "2.0.11",
+        ];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Maven Core: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Log4j lifecycle ----
+    #[test]
+    fn test_maven_rw_log4j_lifecycle() {
+        let chain = [
+            "2.0-alpha1",
+            "2.0-alpha2",
+            "2.0-beta1",
+            "2.0-beta9",
+            "2.0-rc1",
+            "2.0-rc2",
+            "2.0",
+            "2.0.1",
+            "2.0.2",
+            "2.1",
+            "2.17.1",
+            "2.24.3",
+        ];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Log4j: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: JUnit 4 lifecycle ----
+    #[test]
+    fn test_maven_rw_junit4_lifecycle() {
+        let chain = [
+            "4.12-beta-1",
+            "4.12-beta-2",
+            "4.12-beta-3",
+            "4.12",
+            "4.13-beta-1",
+            "4.13-rc-1",
+            "4.13-rc-2",
+            "4.13",
+            "4.13.1",
+            "4.13.2",
+        ];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "JUnit4: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: JUnit Jupiter lifecycle ----
+    #[test]
+    fn test_maven_rw_junit_jupiter_lifecycle() {
+        let chain = [
+            "5.9.0-M1",
+            "5.9.0-RC1",
+            "5.9.0",
+            "5.9.1",
+            "5.9.2",
+            "5.9.3",
+            "5.10.0-M1",
+            "5.10.0-RC1",
+            "5.10.0-RC2",
+            "5.10.0",
+            "5.10.5",
+        ];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "JUnit Jupiter: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Spring Core milestone lifecycle ----
+    #[test]
+    fn test_maven_rw_spring_core_milestones() {
+        let chain = ["2.0-m3", "2.0-m5", "2.0-rc1", "2.0-rc2", "2.0"];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Spring Core: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Guava lifecycle ----
+    #[test]
+    fn test_maven_rw_guava_rc_chain() {
+        let chain = ["14.0-rc1", "14.0-rc2", "14.0-rc3", "14.0", "14.0.1", "15.0-rc1", "15.0"];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Guava: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: SLF4J lifecycle ----
+    #[test]
+    fn test_maven_rw_slf4j_lifecycle() {
+        let chain = [
+            "2.0.0-alpha0",
+            "2.0.0-alpha7",
+            "2.0.0-beta0",
+            "2.0.0-beta1",
+            "2.0.0",
+            "2.0.1",
+            "2.0.17",
+        ];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "SLF4J: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Apache Commons Lang3 ----
+    #[test]
+    fn test_maven_rw_commons_lang3() {
+        let chain = ["3.0", "3.0.1", "3.1", "3.4", "3.9", "3.10", "3.11", "3.12.0", "3.20.0"];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Commons Lang3: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Jackson Databind ----
+    #[test]
+    fn test_maven_rw_jackson_four_component() {
+        // Jackson uses four-component versions for security patches
+        let chain = ["2.6.7", "2.6.7.1", "2.6.7.2", "2.6.7.3", "2.6.7.4", "2.6.7.5"];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Jackson: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    #[test]
+    fn test_maven_rw_jackson_rc_lifecycle() {
+        // Jackson switched from .rc (dot) to -rc (hyphen) across versions
+        let chain = ["2.12.0-rc1", "2.12.0-rc2", "2.12.0", "2.12.7", "2.12.7.1", "2.12.7.2"];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Jackson: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Kafka Clients ----
+    #[test]
+    fn test_maven_rw_kafka_four_component() {
+        // Kafka used four-component versions in early releases
+        let chain = [
+            "0.8.2-beta",
+            "0.9.0.0",
+            "0.9.0.1",
+            "0.10.0.0",
+            "0.10.2.2",
+            "0.11.0.3",
+            "1.0.0",
+            "2.0.0",
+            "3.0.0",
+        ];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Kafka: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Log4j 3.0.0 alpha/beta lifecycle ----
+    #[test]
+    fn test_maven_rw_log4j3_prerelease() {
+        let chain = ["3.0.0-alpha1", "3.0.0-beta1", "3.0.0-beta2", "3.0.0-beta3"];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Log4j 3: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Maven Core 4.x prerelease ----
+    #[test]
+    fn test_maven_rw_maven4_prerelease() {
+        let chain = [
+            "4.0.0-alpha-2",
+            "4.0.0-alpha-13",
+            "4.0.0-beta-3",
+            "4.0.0-beta-5",
+            "4.0.0-rc-1",
+            "4.0.0-rc-5",
+        ];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Maven 4: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Commons IO with mixed component counts ----
+    #[test]
+    fn test_maven_rw_commons_io() {
+        let chain =
+            ["0.1", "1.0", "1.3.2", "1.4", "2.0", "2.0.1", "2.7", "2.8.0", "2.16.1", "2.21.0"];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Commons IO: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Hibernate dot-separated qualifiers ----
+    #[test]
+    fn test_maven_rw_hibernate_lifecycle() {
+        // Hibernate uses .Alpha, .Beta, .CR, .Final with dot separators
+        let chain = ["6.6.0.Alpha1", "6.6.0.CR1", "6.6.0.CR2"];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Hibernate: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: Netty dot-separated qualifiers ----
+    #[test]
+    fn test_maven_rw_netty_lifecycle() {
+        // Netty uses .Alpha, .Beta, .CR with dot separators
+        let chain = ["4.2.0.Alpha1", "4.2.0.Alpha5", "4.2.0.Beta1", "4.2.0.RC1", "4.2.0.RC4"];
+        for i in 0..chain.len() - 1 {
+            assert_eq!(
+                cmpg(chain[i], chain[i + 1]),
+                Less,
+                "Netty: {} should be < {}",
+                chain[i],
+                chain[i + 1]
+            );
+        }
+    }
+
+    // ---- Real-world: timestamp version (Commons IO) ----
+    #[test]
+    fn test_maven_rw_timestamp_version() {
+        // Commons IO had a timestamp version; it's just a huge numeric value
+        assert_eq!(cmpg("2.21.0", "20030203.000550"), Less);
+    }
+
+    // ---- Maven ecosystem dispatch: real-world ----
+    #[test]
+    fn test_maven_eco_log4j_chain() {
+        assert_eq!(compare_str_with_ecosystem("2.0-alpha1", "2.0-rc1", "maven").unwrap(), Less);
+    }
+    #[test]
+    fn test_maven_eco_junit_milestone() {
+        assert_eq!(compare_str_with_ecosystem("5.10.0-M1", "5.10.0-RC1", "maven").unwrap(), Less);
+    }
+    #[test]
+    fn test_maven_eco_rc_lt_release() {
+        assert_eq!(compare_str_with_ecosystem("5.10.0-RC1", "5.10.0", "maven").unwrap(), Less);
+    }
+    #[test]
+    fn test_maven_eco_jackson_four_component() {
+        assert_eq!(compare_str_with_ecosystem("2.6.7", "2.6.7.1", "maven").unwrap(), Less);
+    }
+    #[test]
+    fn test_maven_eco_mvn_alias() {
+        assert_eq!(compare_str_with_ecosystem("1.0-alpha", "1.0", "mvn").unwrap(), Less);
+    }
+
+    // ---- Maven validation ----
+    #[test]
+    fn test_maven_eco_reject_empty() {
+        assert!(compare_str_with_ecosystem("", "1.0", "maven").is_err());
+    }
+    #[test]
+    fn test_maven_eco_reject_non_digit_start() {
+        assert!(compare_str_with_ecosystem("abc", "1.0", "maven").is_err());
+    }
+    #[test]
+    fn test_maven_eco_reject_v_prefix() {
+        // Maven requires digit start; 'v1.0' starts with 'v'
+        assert!(compare_str_with_ecosystem("v1.0", "1.0", "maven").is_err());
+    }
+
+    // ---- Maven properties via parser ----
+    #[test]
+    fn test_maven_parser_prerelease_alpha() {
+        let v = parse("1.0-alpha-1");
+        assert!(v.is_prerelease);
+        assert!(!v.is_postrelease);
+    }
+    #[test]
+    fn test_maven_parser_prerelease_snapshot() {
+        let v = parse("1.0-SNAPSHOT");
+        assert!(v.is_prerelease);
+    }
+    #[test]
+    fn test_maven_parser_postrelease_sp() {
+        let v = parse("1.0-sp-1");
+        assert!(v.is_postrelease);
+    }
+    #[test]
+    fn test_maven_parser_release_no_qualifier() {
+        let v = parse("2.0.1");
+        assert!(!v.is_prerelease);
+        assert!(!v.is_postrelease);
+    }
+    #[test]
+    fn test_maven_parser_segments_alpha() {
+        let v = parse("4.0.0-alpha-13");
+        assert_eq!(v.segments.len(), 5);
+        assert_eq!(v.segments[0], Seg::Num(4));
+        assert_eq!(v.segments[1], Seg::Num(0));
+        assert_eq!(v.segments[2], Seg::Num(0));
+        assert_eq!(v.segments[3], Seg::Text("alpha".into()));
+        assert_eq!(v.segments[4], Seg::Num(13));
+    }
+    #[test]
+    fn test_maven_parser_segments_snapshot() {
+        let v = parse("1.0-SNAPSHOT");
+        assert_eq!(v.segments.len(), 3);
+        assert_eq!(v.segments[0], Seg::Num(1));
+        assert_eq!(v.segments[1], Seg::Num(0));
+        assert_eq!(v.segments[2], Seg::Text("snapshot".into()));
+    }
+    #[test]
+    fn test_maven_parser_four_component() {
+        let v = parse("2.6.7.5");
+        assert_eq!(v.segments.len(), 4);
+        assert_eq!(v.segments[3], Seg::Num(5));
     }
 
     // --- Real-world packages ---
@@ -2264,42 +2761,27 @@ mod tests {
 
     #[test]
     fn test_pep440_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0a1", "1.0a2", "pep440").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0a1", "1.0a2", "pep440").unwrap(), Less);
     }
 
     #[test]
     fn test_pep440_eco_dev_lt_alpha() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.dev1", "1.0a1", "pep440").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.dev1", "1.0a1", "pep440").unwrap(), Less);
     }
 
     #[test]
     fn test_pep440_eco_rc_lt_release() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0rc1", "1.0", "pep440").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0rc1", "1.0", "pep440").unwrap(), Less);
     }
 
     #[test]
     fn test_pep440_eco_rel_lt_post() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0", "1.0.post1", "pep440").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0", "1.0.post1", "pep440").unwrap(), Less);
     }
 
     #[test]
     fn test_pep440_eco_epoch() {
-        assert_eq!(
-            compare_str_with_ecosystem("1!0.1", "2.0", "pep440").unwrap(),
-            Greater
-        );
+        assert_eq!(compare_str_with_ecosystem("1!0.1", "2.0", "pep440").unwrap(), Greater);
     }
 
     #[test]
@@ -2311,112 +2793,73 @@ mod tests {
 
     #[test]
     fn test_debian_eco_tilde_lt_release() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0~alpha", "1.0", "debian").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0~alpha", "1.0", "debian").unwrap(), Less);
     }
 
     #[test]
     fn test_debian_eco_tilde_ordering() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0~alpha", "1.0~beta", "debian").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0~alpha", "1.0~beta", "debian").unwrap(), Less);
     }
 
     #[test]
     fn test_debian_eco_epoch() {
-        assert_eq!(
-            compare_str_with_ecosystem("1:0.1", "2.0", "debian").unwrap(),
-            Greater
-        );
+        assert_eq!(compare_str_with_ecosystem("1:0.1", "2.0", "debian").unwrap(), Greater);
     }
 
     #[test]
     fn test_debian_eco_epoch_compare() {
-        assert_eq!(
-            compare_str_with_ecosystem("2:1.0", "1:2.0", "debian").unwrap(),
-            Greater
-        );
+        assert_eq!(compare_str_with_ecosystem("2:1.0", "1:2.0", "debian").unwrap(), Greater);
     }
 
     #[test]
     fn test_debian_eco_plus_not_stripped() {
         // In Debian, + is NOT build metadata — it's part of the version
-        assert_eq!(
-            compare_str_with_ecosystem("1.0+deb9u1", "1.0+deb9u2", "debian").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0+deb9u1", "1.0+deb9u2", "debian").unwrap(), Less);
     }
 
     #[test]
     fn test_debian_eco_revision() {
         // revision is everything after last '-'
-        assert_eq!(
-            compare_str_with_ecosystem("1.0-1", "1.0-2", "debian").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0-1", "1.0-2", "debian").unwrap(), Less);
     }
 
     // --- RPM ecosystem dispatch ---
 
     #[test]
     fn test_rpm_eco_tilde_lt_release() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0~rc1", "1.0", "rpm").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0~rc1", "1.0", "rpm").unwrap(), Less);
     }
 
     #[test]
     fn test_rpm_eco_release_lt_caret() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0", "1.0^git1", "rpm").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0", "1.0^git1", "rpm").unwrap(), Less);
     }
 
     #[test]
     fn test_rpm_eco_basic_numeric() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0", "2.0", "rpm").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0", "2.0", "rpm").unwrap(), Less);
     }
 
     #[test]
     fn test_rpm_eco_equal() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0", "1.0", "rpm").unwrap(),
-            Equal
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0", "1.0", "rpm").unwrap(), Equal);
     }
 
     #[test]
     fn test_rpm_eco_epoch() {
-        assert_eq!(
-            compare_str_with_ecosystem("1:1.0", "2.0", "rpm").unwrap(),
-            Greater
-        );
+        assert_eq!(compare_str_with_ecosystem("1:1.0", "2.0", "rpm").unwrap(), Greater);
     }
 
     // --- Ruby ecosystem dispatch ---
 
     #[test]
     fn test_ruby_eco_pre_lt_release() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0.pre", "1.0.0", "ruby").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0.pre", "1.0.0", "ruby").unwrap(), Less);
     }
 
     #[test]
     fn test_ruby_eco_alpha_lt_beta() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0.alpha", "1.0.0.beta", "ruby").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0.alpha", "1.0.0.beta", "ruby").unwrap(), Less);
     }
 
     #[test]
@@ -2428,18 +2871,12 @@ mod tests {
 
     #[test]
     fn test_maven_eco_alpha_lt_beta() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0-alpha-1", "1.0-beta-1", "maven").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0-alpha-1", "1.0-beta-1", "maven").unwrap(), Less);
     }
 
     #[test]
     fn test_maven_eco_snapshot_lt_release() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0-SNAPSHOT", "1.0", "maven").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0-SNAPSHOT", "1.0", "maven").unwrap(), Less);
     }
 
     #[test]
@@ -2451,18 +2888,12 @@ mod tests {
 
     #[test]
     fn test_go_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("v1.0.0", "v1.0.1", "go").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("v1.0.0", "v1.0.1", "go").unwrap(), Less);
     }
 
     #[test]
     fn test_go_eco_alpha_lt_release() {
-        assert_eq!(
-            compare_str_with_ecosystem("v1.0.0-alpha", "v1.0.0", "go").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("v1.0.0-alpha", "v1.0.0", "go").unwrap(), Less);
     }
 
     #[test]
@@ -2530,10 +2961,7 @@ mod tests {
 
     #[test]
     fn test_npm_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0", "1.0.1", "npm").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0", "1.0.1", "npm").unwrap(), Less);
     }
 
     #[test]
@@ -2560,19 +2988,13 @@ mod tests {
 
     #[test]
     fn test_nuget_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0", "1.0.1", "nuget").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0", "1.0.1", "nuget").unwrap(), Less);
     }
 
     #[test]
     fn test_nuget_eco_four_segments() {
         // NuGet allows 4 numeric segments
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0.0", "1.0.0.1", "nuget").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0.0", "1.0.0.1", "nuget").unwrap(), Less);
     }
 
     #[test]
@@ -2590,10 +3012,7 @@ mod tests {
 
     #[test]
     fn test_composer_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0", "2.0.0", "composer").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0", "2.0.0", "composer").unwrap(), Less);
     }
 
     #[test]
@@ -2611,14 +3030,8 @@ mod tests {
 
     #[test]
     fn test_composer_aliases() {
-        assert_eq!(
-            Ecosystem::from_str("composer").unwrap(),
-            Ecosystem::Composer
-        );
-        assert_eq!(
-            Ecosystem::from_str("packagist").unwrap(),
-            Ecosystem::Composer
-        );
+        assert_eq!(Ecosystem::from_str("composer").unwrap(), Ecosystem::Composer);
+        assert_eq!(Ecosystem::from_str("packagist").unwrap(), Ecosystem::Composer);
         assert_eq!(Ecosystem::from_str("php").unwrap(), Ecosystem::Composer);
     }
 
@@ -2626,18 +3039,12 @@ mod tests {
 
     #[test]
     fn test_crates_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0", "1.0.1", "crates").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0", "1.0.1", "crates").unwrap(), Less);
     }
 
     #[test]
     fn test_crates_eco_prerelease() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0-alpha", "1.0.0", "crates").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0-alpha", "1.0.0", "crates").unwrap(), Less);
     }
 
     #[test]
@@ -2656,18 +3063,12 @@ mod tests {
 
     #[test]
     fn test_hex_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0", "1.0.1", "hex").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0", "1.0.1", "hex").unwrap(), Less);
     }
 
     #[test]
     fn test_hex_eco_prerelease() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0-rc.1", "1.0.0", "hex").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0-rc.1", "1.0.0", "hex").unwrap(), Less);
     }
 
     #[test]
@@ -2681,10 +3082,7 @@ mod tests {
 
     #[test]
     fn test_swift_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0", "2.0.0", "swift").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0", "2.0.0", "swift").unwrap(), Less);
     }
 
     #[test]
@@ -2702,26 +3100,17 @@ mod tests {
 
     #[test]
     fn test_calver_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("2024.01", "2024.02", "calver").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("2024.01", "2024.02", "calver").unwrap(), Less);
     }
 
     #[test]
     fn test_calver_eco_yyyymmdd() {
-        assert_eq!(
-            compare_str_with_ecosystem("20240115", "20240201", "calver").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("20240115", "20240201", "calver").unwrap(), Less);
     }
 
     #[test]
     fn test_calver_eco_with_micro() {
-        assert_eq!(
-            compare_str_with_ecosystem("2024.1.0", "2024.1.1", "calver").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("2024.1.0", "2024.1.1", "calver").unwrap(), Less);
     }
 
     #[test]
@@ -2733,26 +3122,17 @@ mod tests {
 
     #[test]
     fn test_alpine_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0.0", "1.0.1", "alpine").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0.0", "1.0.1", "alpine").unwrap(), Less);
     }
 
     #[test]
     fn test_alpine_eco_suffix_alpha() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0_alpha1", "1.0_beta1", "alpine").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0_alpha1", "1.0_beta1", "alpine").unwrap(), Less);
     }
 
     #[test]
     fn test_alpine_eco_suffix_pre_lt_release() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.0_rc1", "1.0", "alpine").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.0_rc1", "1.0", "alpine").unwrap(), Less);
     }
 
     #[test]
@@ -2770,18 +3150,12 @@ mod tests {
 
     #[test]
     fn test_docker_eco_basic() {
-        assert_eq!(
-            compare_str_with_ecosystem("1.25.3", "1.25.4", "docker").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("1.25.3", "1.25.4", "docker").unwrap(), Less);
     }
 
     #[test]
     fn test_docker_eco_calver() {
-        assert_eq!(
-            compare_str_with_ecosystem("24.04", "24.10", "docker").unwrap(),
-            Less
-        );
+        assert_eq!(compare_str_with_ecosystem("24.04", "24.10", "docker").unwrap(), Less);
     }
 
     #[test]
