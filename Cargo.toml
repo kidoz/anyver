@@ -10,3 +10,11 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.28"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+needless_pass_by_value = "allow"
