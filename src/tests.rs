@@ -2537,3 +2537,71 @@ fn test_bump_from_single_segment() {
     };
     assert_eq!(major, 6);
 }
+
+// --- stable_versions / latest_stable (via parser is_prerelease) ---
+
+#[test]
+fn test_stable_filter_logic() {
+    // Verify which versions the parser marks as prerelease
+    assert!(parse("2.0.0-rc1").is_prerelease);
+    assert!(parse("1.5.0-beta").is_prerelease);
+    assert!(!parse("1.0.0").is_prerelease);
+    assert!(!parse("2.0.0").is_prerelease);
+}
+
+#[test]
+fn test_stable_filter_alpha_beta_rc() {
+    assert!(parse("1.0-alpha").is_prerelease);
+    assert!(parse("1.0-beta").is_prerelease);
+    assert!(parse("1.0-rc1").is_prerelease);
+    assert!(parse("1.0-SNAPSHOT").is_prerelease);
+    assert!(parse("1.0.dev1").is_prerelease);
+}
+
+#[test]
+fn test_stable_filter_postrelease() {
+    // Post-release versions are NOT prerelease — they should be included
+    assert!(!parse("1.0.post1").is_prerelease);
+    assert!(!parse("1.0-sp-1").is_prerelease);
+}
+
+#[test]
+fn test_latest_stable_selection() {
+    // Among [1.0, 2.0-rc1, 2.0, 1.5-beta], latest stable should be 2.0
+    let versions = ["1.0.0", "2.0.0-rc1", "2.0.0", "1.5.0-beta"];
+    let mut stable: Vec<&str> =
+        versions.iter().copied().filter(|v| !parse(v).is_prerelease).collect();
+    stable.sort_by(|a, b| cmpg(a, b));
+    assert_eq!(*stable.last().unwrap(), "2.0.0");
+}
+
+#[test]
+fn test_stable_versions_empty_when_all_prerelease() {
+    let versions = ["1.0-alpha", "2.0-beta", "3.0-rc1"];
+    let stable: Vec<&str> = versions.iter().copied().filter(|v| !parse(v).is_prerelease).collect();
+    assert!(stable.is_empty());
+}
+
+// --- __richcmp__ respects ecosystem ---
+
+#[test]
+fn test_richcmp_semver_ecosystem() {
+    // In strict SemVer: numeric < alpha → "alpha.1" < "alpha.beta"
+    // In generic:       Num > Text → "alpha.1" > "alpha.beta"
+    // Both created with ecosystem="semver" → richcmp should use semver
+    assert_eq!(
+        compare_str_with_ecosystem("1.0.0-alpha.1", "1.0.0-alpha.beta", "semver").unwrap(),
+        Less
+    );
+    // And with generic, it's Greater
+    assert_eq!(cmpg("1.0.0-alpha.1", "1.0.0-alpha.beta"), Greater);
+}
+
+// --- Ecosystem::from_str returns Result<_, String> (decoupled from PyO3) ---
+
+#[test]
+fn test_ecosystem_from_str_error_is_string() {
+    let err = Ecosystem::from_str("invalid");
+    assert!(err.is_err());
+    assert!(err.unwrap_err().contains("unsupported ecosystem"));
+}
