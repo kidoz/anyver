@@ -9,6 +9,42 @@ use crate::strategies::{
     ParsedRepr, cmp_parsed, compare_for_ecosystem, normalized, parse_for_ecosystem,
 };
 
+fn eco_from_str(input: &str) -> PyResult<Ecosystem> {
+    Ecosystem::from_str(input).map_err(PyValueError::new_err)
+}
+
+trait SegToPy {
+    fn to_py<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny>;
+}
+
+impl SegToPy for Seg {
+    fn to_py<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
+        match self {
+            Seg::Num(n) => (*n).into_pyobject(py).unwrap().into_any(),
+            Seg::Text(s) => s.as_str().into_pyobject(py).unwrap().into_any(),
+        }
+    }
+}
+
+/// Resolve comparison ordering between two `PyVersion` values.
+/// When both share the same non-generic ecosystem, use that ecosystem's
+/// comparator. Otherwise fall back to generic comparison.
+fn richcmp_ord(a: &PyVersion, b: &PyVersion) -> Ordering {
+    let eco = if a.eco == b.eco { a.eco } else { Ecosystem::Generic };
+    if eco == Ecosystem::Generic {
+        cmp_parsed(&a.inner, &b.inner)
+    } else {
+        // Re-parse through the ecosystem strategy for correct semantics
+        let Ok(left) = parse_for_ecosystem(eco, &a.inner.raw) else {
+            return cmp_parsed(&a.inner, &b.inner);
+        };
+        let Ok(right) = parse_for_ecosystem(eco, &b.inner.raw) else {
+            return cmp_parsed(&a.inner, &b.inner);
+        };
+        compare_for_ecosystem(eco, &left, &right)
+    }
+}
+
 #[pyclass(name = "Version", from_py_object)]
 #[derive(Debug, Clone)]
 pub(crate) struct PyVersion {
@@ -24,13 +60,13 @@ impl PyVersion {
         let eco = if ecosystem.eq_ignore_ascii_case("auto") {
             autodetect_ecosystem(version)
         } else {
-            Ecosystem::from_str(ecosystem)?
+            eco_from_str(ecosystem)?
         };
         Ok(PyVersion { inner: parse(version), eco })
     }
 
     fn __richcmp__(&self, other: &PyVersion, op: CompareOp) -> bool {
-        let ord = cmp_parsed(&self.inner, &other.inner);
+        let ord = richcmp_ord(self, other);
         match op {
             CompareOp::Lt => ord == Ordering::Less,
             CompareOp::Le => ord != Ordering::Greater,
@@ -73,6 +109,10 @@ impl PyVersion {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
+        // Hash the ecosystem so that versions from different ecosystems
+        // with the same raw string but different comparison semantics
+        // don't collide.
+        self.eco.hash(&mut hasher);
         self.inner.epoch.hash(&mut hasher);
         let segs = normalized(&self.inner.segments);
         for s in segs {
@@ -176,7 +216,7 @@ impl PyVersion {
         let eco = match ecosystem {
             None => self.eco,
             Some(s) if s.eq_ignore_ascii_case("auto") => self.eco,
-            Some(s) => Ecosystem::from_str(s)?,
+            Some(s) => eco_from_str(s)?,
         };
         let left = parse_for_ecosystem(eco, &self.inner.raw).map_err(PyValueError::new_err)?;
         let right = extract_parsed_for_ecosystem(other, eco)?;
@@ -270,7 +310,7 @@ fn resolve_eco_for_obj(ecosystem: &str, obj: &Bound<'_, PyAny>) -> PyResult<Ecos
             Err(PyTypeError::new_err("expected Version or str"))
         }
     } else {
-        Ecosystem::from_str(ecosystem)
+        eco_from_str(ecosystem)
     }
 }
 
@@ -294,7 +334,7 @@ pub(crate) fn compare_str_with_ecosystem(a: &str, b: &str, ecosystem: &str) -> P
     let eco = if ecosystem.eq_ignore_ascii_case("auto") {
         autodetect_ecosystem(a)
     } else {
-        Ecosystem::from_str(ecosystem)?
+        eco_from_str(ecosystem)?
     };
     let left = parse_for_ecosystem(eco, a).map_err(PyValueError::new_err)?;
     let right = parse_for_ecosystem(eco, b).map_err(PyValueError::new_err)?;
@@ -343,7 +383,7 @@ fn sort_versions<'py>(
             Ecosystem::Generic
         }
     } else {
-        Ecosystem::from_str(ecosystem)?
+        eco_from_str(ecosystem)?
     };
     let mut pairs: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
         .into_iter()
@@ -362,7 +402,7 @@ fn batch_compare(
     ecosystem: &str,
 ) -> PyResult<Vec<i32>> {
     let is_auto = ecosystem.eq_ignore_ascii_case("auto");
-    let base_eco = if is_auto { Ecosystem::Generic } else { Ecosystem::from_str(ecosystem)? };
+    let base_eco = if is_auto { Ecosystem::Generic } else { eco_from_str(ecosystem)? };
 
     pairs
         .iter()
@@ -429,7 +469,7 @@ fn max_version<'py>(
             Ecosystem::Generic
         }
     } else {
-        Ecosystem::from_str(ecosystem)?
+        eco_from_str(ecosystem)?
     };
     let mut parsed: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
         .into_iter()
@@ -457,7 +497,7 @@ fn min_version<'py>(
             Ecosystem::Generic
         }
     } else {
-        Ecosystem::from_str(ecosystem)?
+        eco_from_str(ecosystem)?
     };
     let parsed: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
         .into_iter()
@@ -526,7 +566,7 @@ fn stable_versions<'py>(
             Ecosystem::Generic
         }
     } else {
-        Ecosystem::from_str(ecosystem)?
+        eco_from_str(ecosystem)?
     };
     versions
         .into_iter()
@@ -567,7 +607,7 @@ fn latest_stable<'py>(
             Ecosystem::Generic
         }
     } else {
-        Ecosystem::from_str(ecosystem)?
+        eco_from_str(ecosystem)?
     };
     let mut stable: Vec<(ParsedRepr, Bound<'py, PyAny>)> = Vec::new();
     for obj in versions {
@@ -592,17 +632,17 @@ fn latest_stable<'py>(
 }
 
 #[pyfunction]
-fn bump_major(version: &str) -> PyResult<String> {
+fn bump_major(version: &str) -> String {
     let v = parse(version);
     let major = match v.segments.first() {
         Some(Seg::Num(n)) => n + 1,
         _ => 1,
     };
-    Ok(format!("{major}.0.0"))
+    format!("{major}.0.0")
 }
 
 #[pyfunction]
-fn bump_minor(version: &str) -> PyResult<String> {
+fn bump_minor(version: &str) -> String {
     let v = parse(version);
     let major = match v.segments.first() {
         Some(Seg::Num(n)) => *n,
@@ -612,11 +652,11 @@ fn bump_minor(version: &str) -> PyResult<String> {
         Some(Seg::Num(n)) => n + 1,
         _ => 1,
     };
-    Ok(format!("{major}.{minor}.0"))
+    format!("{major}.{minor}.0")
 }
 
 #[pyfunction]
-fn bump_patch(version: &str) -> PyResult<String> {
+fn bump_patch(version: &str) -> String {
     let v = parse(version);
     let major = match v.segments.first() {
         Some(Seg::Num(n)) => *n,
@@ -630,7 +670,7 @@ fn bump_patch(version: &str) -> PyResult<String> {
         Some(Seg::Num(n)) => n + 1,
         _ => 1,
     };
-    Ok(format!("{major}.{minor}.{patch}"))
+    format!("{major}.{minor}.{patch}")
 }
 
 #[pymodule]
