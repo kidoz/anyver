@@ -97,6 +97,41 @@ pub(crate) trait VersionStrategy {
     fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering;
 }
 
+// Macros to reduce strategy boilerplate.
+// validate→generic: validate input, then parse/compare via generic parser.
+// semver: parse/compare via strict SemVer (validation included in parse_semver_strict).
+macro_rules! impl_generic_strategy {
+    ($name:ident, $validate:path) => {
+        impl VersionStrategy for $name {
+            fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+                $validate(input)?;
+                Ok(ParsedRepr::Generic(parse_generic(input)))
+            }
+            fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+                match (left, right) {
+                    (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
+                    _ => unreachable!(),
+                }
+            }
+        }
+    };
+}
+macro_rules! impl_semver_strategy {
+    ($name:ident) => {
+        impl VersionStrategy for $name {
+            fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+                parse_semver_strict(input).map(ParsedRepr::Semver)
+            }
+            fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+                match (left, right) {
+                    (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
+                    _ => unreachable!(),
+                }
+            }
+        }
+    };
+}
+
 pub(crate) struct GenericStrategy;
 pub(crate) struct SemverStrategy;
 pub(crate) struct Pep440Strategy;
@@ -114,113 +149,59 @@ pub(crate) struct HexStrategy;
 pub(crate) struct SwiftStrategy;
 pub(crate) struct DockerStrategy;
 
+// Generic strategy — no validation
 impl VersionStrategy for GenericStrategy {
     fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
         Ok(ParsedRepr::Generic(parse_generic(input)))
     }
-
     fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
         match (left, right) {
             (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
-            _ => unreachable!("generic strategy received non-generic parsed values"),
+            _ => unreachable!(),
         }
     }
 }
 
-impl VersionStrategy for SemverStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        parse_semver_strict(input).map(ParsedRepr::Semver)
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
-            _ => unreachable!("semver strategy received non-semver parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for Pep440Strategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_pep440(input)?;
-        Ok(ParsedRepr::Generic(parse_generic(input)))
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
-            _ => unreachable!("pep440 strategy received non-generic parsed values"),
-        }
-    }
-}
-
+// Debian and RPM have custom parsers/comparators
 impl VersionStrategy for DebianStrategy {
     fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
         parse_debian(input).map(ParsedRepr::Debian)
     }
-
     fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
         match (left, right) {
             (ParsedRepr::Debian(a), ParsedRepr::Debian(b)) => cmp_debian(a, b),
-            _ => unreachable!("debian strategy received non-debian parsed values"),
+            _ => unreachable!(),
         }
     }
 }
-
 impl VersionStrategy for RpmStrategy {
     fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
         parse_rpm(input).map(ParsedRepr::Rpm)
     }
-
     fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
         match (left, right) {
             (ParsedRepr::Rpm(a), ParsedRepr::Rpm(b)) => cmp_rpm(a, b),
-            _ => unreachable!("rpm strategy received non-rpm parsed values"),
+            _ => unreachable!(),
         }
     }
 }
 
-impl VersionStrategy for RubyStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_ruby(input)?;
-        Ok(ParsedRepr::Generic(parse_generic(input)))
-    }
+// SemVer-based ecosystems (validation included in parse_semver_strict)
+impl_semver_strategy!(SemverStrategy);
+impl_semver_strategy!(GoStrategy);
+impl_semver_strategy!(CratesStrategy);
+impl_semver_strategy!(HexStrategy);
+impl_semver_strategy!(SwiftStrategy);
 
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
-            _ => unreachable!("ruby strategy received non-generic parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for MavenStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_maven(input)?;
-        Ok(ParsedRepr::Generic(parse_generic(input)))
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
-            _ => unreachable!("maven strategy received non-generic parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for GoStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        // Go modules use SemVer with optional v-prefix (strip_v handled in parse_semver_strict)
-        parse_semver_strict(input).map(ParsedRepr::Semver)
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
-            _ => unreachable!("go strategy received non-semver parsed values"),
-        }
-    }
-}
+// Validate→generic ecosystems
+impl_generic_strategy!(Pep440Strategy, validate_pep440);
+impl_generic_strategy!(RubyStrategy, validate_ruby);
+impl_generic_strategy!(MavenStrategy, validate_maven);
+impl_generic_strategy!(NugetStrategy, validate_nuget);
+impl_generic_strategy!(ComposerStrategy, validate_composer);
+impl_generic_strategy!(CalverStrategy, validate_calver);
+impl_generic_strategy!(AlpineStrategy, validate_alpine);
+impl_generic_strategy!(DockerStrategy, validate_docker);
 
 static GENERIC_STRATEGY: GenericStrategy = GenericStrategy;
 static SEMVER_STRATEGY: SemverStrategy = SemverStrategy;
@@ -238,118 +219,6 @@ static CRATES_STRATEGY: CratesStrategy = CratesStrategy;
 static HEX_STRATEGY: HexStrategy = HexStrategy;
 static SWIFT_STRATEGY: SwiftStrategy = SwiftStrategy;
 static DOCKER_STRATEGY: DockerStrategy = DockerStrategy;
-
-impl VersionStrategy for CratesStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_crates(input)?;
-        parse_semver_strict(input).map(ParsedRepr::Semver)
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
-            _ => unreachable!("crates strategy received non-semver parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for HexStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_hex(input)?;
-        parse_semver_strict(input).map(ParsedRepr::Semver)
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
-            _ => unreachable!("hex strategy received non-semver parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for SwiftStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_swift(input)?;
-        parse_semver_strict(input).map(ParsedRepr::Semver)
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
-            _ => unreachable!("swift strategy received non-semver parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for DockerStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_docker(input)?;
-        Ok(ParsedRepr::Generic(parse_generic(input)))
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
-            _ => unreachable!("docker strategy received non-generic parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for NugetStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_nuget(input)?;
-        Ok(ParsedRepr::Generic(parse_generic(input)))
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
-            _ => unreachable!("nuget strategy received non-generic parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for ComposerStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_composer(input)?;
-        Ok(ParsedRepr::Generic(parse_generic(input)))
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
-            _ => unreachable!("composer strategy received non-generic parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for CalverStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_calver(input)?;
-        Ok(ParsedRepr::Generic(parse_generic(input)))
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
-            _ => unreachable!("calver strategy received non-generic parsed values"),
-        }
-    }
-}
-
-impl VersionStrategy for AlpineStrategy {
-    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
-        validate_alpine(input)?;
-        Ok(ParsedRepr::Generic(parse_generic(input)))
-    }
-
-    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
-        match (left, right) {
-            (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
-            _ => unreachable!("alpine strategy received non-generic parsed values"),
-        }
-    }
-}
 
 pub(crate) fn strategy_for(ecosystem: Ecosystem) -> &'static dyn VersionStrategy {
     match ecosystem {
@@ -834,24 +703,6 @@ pub(crate) fn validate_alpine(input: &str) -> Result<(), String> {
     if !s.as_bytes()[0].is_ascii_digit() {
         return Err(format!("Alpine version must start with a digit: '{input}'"));
     }
-    Ok(())
-}
-
-pub(crate) fn validate_crates(input: &str) -> Result<(), String> {
-    // Crates.io requires strict SemVer
-    parse_semver_strict(input)?;
-    Ok(())
-}
-
-pub(crate) fn validate_hex(input: &str) -> Result<(), String> {
-    // Hex (Elixir/Erlang) requires strict SemVer
-    parse_semver_strict(input)?;
-    Ok(())
-}
-
-pub(crate) fn validate_swift(input: &str) -> Result<(), String> {
-    // Swift PM requires strict SemVer
-    parse_semver_strict(input)?;
     Ok(())
 }
 
