@@ -121,6 +121,11 @@ impl PyVersion {
     }
 
     #[getter]
+    fn is_stable(&self) -> bool {
+        !self.inner.is_prerelease
+    }
+
+    #[getter]
     fn count(&self) -> usize {
         self.inner.segments.len()
     }
@@ -166,12 +171,12 @@ impl PyVersion {
         PyTuple::new(py, nums)
     }
 
-    #[pyo3(signature = (other, ecosystem = "generic"))]
-    fn compare(&self, other: &Bound<'_, PyAny>, ecosystem: &str) -> PyResult<i32> {
-        let eco = if ecosystem.eq_ignore_ascii_case("auto") {
-            self.eco
-        } else {
-            Ecosystem::from_str(ecosystem)?
+    #[pyo3(signature = (other, ecosystem = None))]
+    fn compare(&self, other: &Bound<'_, PyAny>, ecosystem: Option<&str>) -> PyResult<i32> {
+        let eco = match ecosystem {
+            None => self.eco,
+            Some(s) if s.eq_ignore_ascii_case("auto") => self.eco,
+            Some(s) => Ecosystem::from_str(s)?,
         };
         let left = parse_for_ecosystem(eco, &self.inner.raw).map_err(PyValueError::new_err)?;
         let right = extract_parsed_for_ecosystem(other, eco)?;
@@ -466,6 +471,166 @@ fn min_version<'py>(
     Ok(min_obj)
 }
 
+pub(crate) fn parse_constraint(spec: &str) -> Result<(&str, &str), String> {
+    let s = spec.trim();
+    if let Some(v) = s.strip_prefix(">=") {
+        Ok((">=", v.trim()))
+    } else if let Some(v) = s.strip_prefix("<=") {
+        Ok(("<=", v.trim()))
+    } else if let Some(v) = s.strip_prefix("!=") {
+        Ok(("!=", v.trim()))
+    } else if let Some(v) = s.strip_prefix("==") {
+        Ok(("==", v.trim()))
+    } else if let Some(v) = s.strip_prefix('>') {
+        Ok((">", v.trim()))
+    } else if let Some(v) = s.strip_prefix('<') {
+        Ok(("<", v.trim()))
+    } else {
+        Err(format!("invalid constraint: '{s}'; expected operator (>=, <=, >, <, ==, !=) followed by version"))
+    }
+}
+
+#[pyfunction(signature = (version, constraint, ecosystem = "generic"))]
+fn satisfies(version: &str, constraint: &str, ecosystem: &str) -> PyResult<bool> {
+    for part in constraint.split(',') {
+        let (op, cv) = parse_constraint(part).map_err(PyValueError::new_err)?;
+        let ord = compare_str_with_ecosystem(version, cv, ecosystem)?;
+        let ok = match op {
+            ">=" => ord != Ordering::Less,
+            "<=" => ord != Ordering::Greater,
+            ">" => ord == Ordering::Greater,
+            "<" => ord == Ordering::Less,
+            "==" => ord == Ordering::Equal,
+            "!=" => ord != Ordering::Equal,
+            _ => unreachable!(),
+        };
+        if !ok {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+#[pyfunction(signature = (versions, ecosystem = "generic"))]
+fn stable_versions<'py>(
+    _py: Python<'py>,
+    versions: Vec<Bound<'py, PyAny>>,
+    ecosystem: &str,
+) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let eco = if ecosystem.eq_ignore_ascii_case("auto") {
+        if let Some(first) = versions.first() {
+            resolve_eco_for_obj("auto", first)?
+        } else {
+            Ecosystem::Generic
+        }
+    } else {
+        Ecosystem::from_str(ecosystem)?
+    };
+    versions
+        .into_iter()
+        .filter_map(|obj| {
+            let raw = if let Ok(v) = obj.extract::<PyRef<PyVersion>>() {
+                v.inner.raw.clone()
+            } else if let Ok(s) = obj.extract::<String>() {
+                s
+            } else {
+                return Some(Err(PyTypeError::new_err("expected Version or str")));
+            };
+            let parsed = parse(&raw);
+            if parsed.is_prerelease {
+                None
+            } else {
+                // Validate against ecosystem if needed
+                match parse_for_ecosystem(eco, &raw) {
+                    Ok(_) => Some(Ok(obj)),
+                    Err(e) => Some(Err(PyValueError::new_err(e))),
+                }
+            }
+        })
+        .collect()
+}
+
+#[pyfunction(signature = (versions, ecosystem = "generic"))]
+fn latest_stable<'py>(
+    versions: Vec<Bound<'py, PyAny>>,
+    ecosystem: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    if versions.is_empty() {
+        return Err(PyValueError::new_err("empty sequence"));
+    }
+    let eco = if ecosystem.eq_ignore_ascii_case("auto") {
+        if let Some(first) = versions.first() {
+            resolve_eco_for_obj("auto", first)?
+        } else {
+            Ecosystem::Generic
+        }
+    } else {
+        Ecosystem::from_str(ecosystem)?
+    };
+    let mut stable: Vec<(ParsedRepr, Bound<'py, PyAny>)> = Vec::new();
+    for obj in versions {
+        let raw = if let Ok(v) = obj.extract::<PyRef<PyVersion>>() {
+            v.inner.raw.clone()
+        } else if let Ok(s) = obj.extract::<String>() {
+            s
+        } else {
+            return Err(PyTypeError::new_err("expected Version or str"));
+        };
+        let parsed = parse(&raw);
+        if !parsed.is_prerelease {
+            let repr = extract_parsed_for_ecosystem(&obj, eco)?;
+            stable.push((repr, obj));
+        }
+    }
+    if stable.is_empty() {
+        return Err(PyValueError::new_err("no stable versions found"));
+    }
+    stable.sort_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0));
+    Ok(stable.pop().unwrap().1)
+}
+
+#[pyfunction]
+fn bump_major(version: &str) -> PyResult<String> {
+    let v = parse(version);
+    let major = match v.segments.first() {
+        Some(Seg::Num(n)) => n + 1,
+        _ => 1,
+    };
+    Ok(format!("{major}.0.0"))
+}
+
+#[pyfunction]
+fn bump_minor(version: &str) -> PyResult<String> {
+    let v = parse(version);
+    let major = match v.segments.first() {
+        Some(Seg::Num(n)) => *n,
+        _ => 0,
+    };
+    let minor = match v.segments.get(1) {
+        Some(Seg::Num(n)) => n + 1,
+        _ => 1,
+    };
+    Ok(format!("{major}.{minor}.0"))
+}
+
+#[pyfunction]
+fn bump_patch(version: &str) -> PyResult<String> {
+    let v = parse(version);
+    let major = match v.segments.first() {
+        Some(Seg::Num(n)) => *n,
+        _ => 0,
+    };
+    let minor = match v.segments.get(1) {
+        Some(Seg::Num(n)) => *n,
+        _ => 0,
+    };
+    let patch = match v.segments.get(2) {
+        Some(Seg::Num(n)) => n + 1,
+        _ => 1,
+    };
+    Ok(format!("{major}.{minor}.{patch}"))
+}
+
 #[pymodule]
 fn anyver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVersion>()?;
@@ -484,5 +649,11 @@ fn anyver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ne, m)?)?;
     m.add_function(wrap_pyfunction!(max_version, m)?)?;
     m.add_function(wrap_pyfunction!(min_version, m)?)?;
+    m.add_function(wrap_pyfunction!(stable_versions, m)?)?;
+    m.add_function(wrap_pyfunction!(latest_stable, m)?)?;
+    m.add_function(wrap_pyfunction!(satisfies, m)?)?;
+    m.add_function(wrap_pyfunction!(bump_major, m)?)?;
+    m.add_function(wrap_pyfunction!(bump_minor, m)?)?;
+    m.add_function(wrap_pyfunction!(bump_patch, m)?)?;
     Ok(())
 }
