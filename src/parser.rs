@@ -1,19 +1,7 @@
-use pyo3::exceptions::PyValueError;
-use pyo3::prelude::*;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Seg {
     Num(u64),
     Text(String),
-}
-
-impl Seg {
-    pub(crate) fn to_py<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
-        match self {
-            Seg::Num(n) => (*n).into_pyobject(py).unwrap().into_any(),
-            Seg::Text(s) => s.as_str().into_pyobject(py).unwrap().into_any(),
-        }
-    }
 }
 
 pub(crate) fn tag_weight(s: &str) -> Option<i32> {
@@ -66,7 +54,7 @@ pub(crate) enum Ecosystem {
 }
 
 impl Ecosystem {
-    pub(crate) fn from_str(input: &str) -> PyResult<Self> {
+    pub(crate) fn from_str(input: &str) -> Result<Self, String> {
         match input.to_ascii_lowercase().as_str() {
             "generic" => Ok(Self::Generic),
             "semver" | "semver_strict" | "semver-strict" => Ok(Self::Semver),
@@ -85,9 +73,9 @@ impl Ecosystem {
             "calver" => Ok(Self::Calver),
             "alpine" | "apk" => Ok(Self::Alpine),
             "docker" | "oci" => Ok(Self::Docker),
-            other => Err(PyValueError::new_err(format!(
+            other => Err(format!(
                 "unsupported ecosystem '{other}'; expected one of: generic, semver, pep440, debian, rpm, ruby, maven, go, npm, nuget, composer, crates, hex, swift, calver, alpine, docker"
-            ))),
+            )),
         }
     }
 
