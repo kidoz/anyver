@@ -7,7 +7,7 @@
 
 A high-performance Python library (written in Rust via PyO3) for parsing and comparing software version strings across all major package ecosystems.
 
-Handles: **SemVer, PEP 440, npm, Go modules, Debian/dpkg, RPM, Ruby Gems, Maven, NuGet, Composer, CalVer, Alpine, Docker** — with a single generic parser and ecosystem-specific modes.
+Handles: **SemVer, PEP 440, npm, Go modules, Debian/dpkg, RPM, Ruby Gems, Maven, NuGet, Composer, Crates.io, Hex, Swift PM, CalVer, Alpine, Docker** — with a single generic parser and ecosystem-specific modes.
 
 ## Installation
 
@@ -48,6 +48,7 @@ v = Version("1.2.3-rc.1+build.42")
 
 # Properties
 v.raw              # "1.2.3-rc.1+build.42"
+v.ecosystem        # "generic" (detected ecosystem name)
 v.epoch            # 0
 v.build            # "build.42"
 v.major            # 1
@@ -55,6 +56,7 @@ v.minor            # 2
 v.patch            # 3
 v.is_prerelease    # True
 v.is_postrelease   # False
+v.is_stable        # False (opposite of is_prerelease)
 
 # Segments
 v.segments()       # (1, 2, 3, "rc", 1)
@@ -67,6 +69,11 @@ v[-1]              # 1
 # String representations
 str(v)             # "1.2.3-rc.1+build.42"
 repr(v)            # "Version('1.2.3-rc.1+build.42')"
+
+# Compare using the Version's own detected ecosystem
+v.compare("1.2.3")      # 0
+v.compare("2.0.0")      # -1
+v.compare("0.1.0")      # 1
 ```
 
 ## Sorting and Batch Operations
@@ -91,6 +98,45 @@ anyver.lt("1.0", "2.0")    # True
 anyver.le("1.0", "1.0.0")  # True
 anyver.eq("1.0", "1.0.0")  # True
 anyver.ne("1.0", "2.0")    # True
+```
+
+## Version Constraints
+
+Check whether a version satisfies a constraint expression. Supports `>=`, `<=`, `>`, `<`, `==`, `!=` operators, combined with commas for AND logic:
+
+```python
+anyver.satisfies("1.5.0", ">=1.0.0,<2.0.0")   # True
+anyver.satisfies("2.0.0", ">=1.0.0,<2.0.0")   # False
+anyver.satisfies("1.0.0", ">=1.0.0")           # True
+anyver.satisfies("1.0.0", "!=1.0.0")           # False
+anyver.satisfies("1.0.0-alpha", ">1.0.0")      # False
+
+# Works with any ecosystem
+anyver.satisfies("5.14.0-503.19.1.el9_5", ">=5.14.0-427.0.0.el9_4", ecosystem="rpm")
+```
+
+## Stable Version Filtering
+
+Filter out pre-release versions or find the latest stable:
+
+```python
+anyver.stable_versions(["2.0.0-rc1", "1.0.0", "2.0.0", "1.5.0-beta"])
+# ["1.0.0", "2.0.0"]
+
+anyver.latest_stable(["2.0.0-rc1", "1.0.0", "2.0.0", "1.5.0-beta"])
+# "2.0.0"
+```
+
+## Version Bumping
+
+```python
+anyver.bump_major("1.2.3")          # "2.0.0"
+anyver.bump_minor("1.2.3")          # "1.3.0"
+anyver.bump_patch("1.2.3")          # "1.2.4"
+
+# Pre-release tags are stripped
+anyver.bump_major("1.2.3-alpha")    # "2.0.0"
+anyver.bump_patch("1.0.0-rc1")     # "1.0.1"
 ```
 
 ## Hashable (Sets and Dicts)
@@ -139,7 +185,7 @@ Detection rules (in priority order):
 3. `.post`, `.dev` → PEP 440
 4. `+incompatible` → Go, `-SNAPSHOT` → Maven
 5. `_alpha`, `_beta`, `_rc`, `_p`, `-rN` → Alpine
-6. `+deb`, `+ubuntu` → Debian; `.el`, `.fc` → RPM
+6. `+deb`, `+ubuntu` → Debian; `.el`, `.fc`, `.amzn` → RPM
 7. Digit-letter patterns like `1a1`, `1b2`, `1rc1` → PEP 440
 8. Dot-separated `.pre`, `.rc`, `.beta`, `.alpha` (no hyphens) → Ruby
 9. Year-like first segment (1990-2100) → CalVer
@@ -164,8 +210,10 @@ anyver.compare("1!0.1", "2.0", ecosystem="pep440")     # 1
 
 # All supported ecosystems:
 # auto (default for Version), generic (default for compare),
-# semver, npm, pep440, debian, rpm, go, rubygems,
-# maven, nuget, composer, crates, hex, swift, calver, alpine, docker
+# semver, npm, pep440, debian, rpm, go, ruby/gem/rubygems,
+# maven/mvn, nuget/dotnet, composer/php/packagist,
+# crates/cargo, hex/elixir/erlang, swift/swiftpm,
+# calver, alpine/apk, docker/oci
 ```
 
 ## Database Integration
@@ -184,6 +232,14 @@ Version("1.2.3-rc.1+build.42").to_dict()
 #   "is_prerelease": True,
 #   "is_postrelease": False
 # }
+```
+
+### `sort_key()` — Database-Friendly Sort Key
+
+```python
+Version("1.2.3-rc.1").sort_key()
+# Tuple of tuples that preserves comparison order when sorted lexically.
+# Guarantees perfect isomorphism with anyver.compare().
 ```
 
 ## Cross-Ecosystem Examples
