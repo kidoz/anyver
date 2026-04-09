@@ -4,7 +4,7 @@ fmt:
 
 # Run clippy with pedantic lints (matches CI)
 lint:
-    cargo clippy -- -D warnings
+    cargo clippy --all-targets -- -D warnings
 
 # Run Rust tests
 test:
