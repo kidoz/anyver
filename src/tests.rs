@@ -2477,18 +2477,12 @@ fn test_satisfies_ge() {
 
 #[test]
 fn test_satisfies_basic_ge() {
-    assert_eq!(
-        compare_str_with_ecosystem("1.5.0", "1.0.0", "generic").unwrap(),
-        Greater
-    );
+    assert_eq!(compare_str_with_ecosystem("1.5.0", "1.0.0", "generic").unwrap(), Greater);
 }
 
 #[test]
 fn test_satisfies_basic_lt() {
-    assert_eq!(
-        compare_str_with_ecosystem("1.5.0", "2.0.0", "generic").unwrap(),
-        Less
-    );
+    assert_eq!(compare_str_with_ecosystem("1.5.0", "2.0.0", "generic").unwrap(), Less);
 }
 
 // --- bump helpers (via parser) ---

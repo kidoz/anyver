@@ -486,7 +486,9 @@ pub(crate) fn parse_constraint(spec: &str) -> Result<(&str, &str), String> {
     } else if let Some(v) = s.strip_prefix('<') {
         Ok(("<", v.trim()))
     } else {
-        Err(format!("invalid constraint: '{s}'; expected operator (>=, <=, >, <, ==, !=) followed by version"))
+        Err(format!(
+            "invalid constraint: '{s}'; expected operator (>=, <=, >, <, ==, !=) followed by version"
+        ))
     }
 }
 
