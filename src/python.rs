@@ -26,22 +26,13 @@ impl SegToPy for Seg {
     }
 }
 
-/// Resolve comparison ordering between two `PyVersion` values.
-/// When both share the same non-generic ecosystem, use that ecosystem's
-/// comparator. Otherwise fall back to generic comparison.
+/// Compare two `PyVersion` values using the shared ecosystem if both match,
+/// otherwise fall back to generic comparison. Uses pre-parsed repr — no re-parsing.
 fn richcmp_ord(a: &PyVersion, b: &PyVersion) -> Ordering {
-    let eco = if a.eco == b.eco { a.eco } else { Ecosystem::Generic };
-    if eco == Ecosystem::Generic {
-        cmp_parsed(&a.inner, &b.inner)
+    if a.eco == b.eco {
+        compare_for_ecosystem(a.eco, &a.repr, &b.repr)
     } else {
-        // Re-parse through the ecosystem strategy for correct semantics
-        let Ok(left) = parse_for_ecosystem(eco, &a.inner.raw) else {
-            return cmp_parsed(&a.inner, &b.inner);
-        };
-        let Ok(right) = parse_for_ecosystem(eco, &b.inner.raw) else {
-            return cmp_parsed(&a.inner, &b.inner);
-        };
-        compare_for_ecosystem(eco, &left, &right)
+        cmp_parsed(&a.inner, &b.inner)
     }
 }
 
@@ -50,6 +41,7 @@ fn richcmp_ord(a: &PyVersion, b: &PyVersion) -> Ordering {
 pub(crate) struct PyVersion {
     inner: ParsedVersion,
     eco: Ecosystem,
+    repr: ParsedRepr,
 }
 
 #[pymethods]
@@ -57,12 +49,20 @@ impl PyVersion {
     #[new]
     #[pyo3(signature = (version, ecosystem = "auto"))]
     fn new(version: &str, ecosystem: &str) -> PyResult<Self> {
-        let eco = if ecosystem.eq_ignore_ascii_case("auto") {
-            autodetect_ecosystem(version)
+        let inner = parse(version);
+        let (eco, repr) = if ecosystem.eq_ignore_ascii_case("auto") {
+            let detected = autodetect_ecosystem(version);
+            // Auto-detection: fall back to generic if ecosystem parse fails
+            match parse_for_ecosystem(detected, version) {
+                Ok(r) => (detected, r),
+                Err(_) => (Ecosystem::Generic, ParsedRepr::Generic(inner.clone())),
+            }
         } else {
-            eco_from_str(ecosystem)?
+            let eco = eco_from_str(ecosystem)?;
+            let repr = parse_for_ecosystem(eco, version).map_err(PyValueError::new_err)?;
+            (eco, repr)
         };
-        Ok(PyVersion { inner: parse(version), eco })
+        Ok(PyVersion { inner, eco, repr })
     }
 
     fn __richcmp__(&self, other: &PyVersion, op: CompareOp) -> bool {
@@ -109,10 +109,9 @@ impl PyVersion {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
-        // Hash the ecosystem so that versions from different ecosystems
-        // with the same raw string but different comparison semantics
-        // don't collide.
-        self.eco.hash(&mut hasher);
+        // Hash based on generic segments only (no ecosystem) because
+        // cross-ecosystem == falls back to generic comparison.
+        // This ensures a == b → hash(a) == hash(b) always holds.
         self.inner.epoch.hash(&mut hasher);
         let segs = normalized(&self.inner.segments);
         for s in segs {
@@ -218,7 +217,11 @@ impl PyVersion {
             Some(s) if s.eq_ignore_ascii_case("auto") => self.eco,
             Some(s) => eco_from_str(s)?,
         };
-        let left = parse_for_ecosystem(eco, &self.inner.raw).map_err(PyValueError::new_err)?;
+        let left = if eco == self.eco {
+            self.repr.clone()
+        } else {
+            parse_for_ecosystem(eco, &self.inner.raw).map_err(PyValueError::new_err)?
+        };
         let right = extract_parsed_for_ecosystem(other, eco)?;
         Ok(match compare_for_ecosystem(eco, &left, &right) {
             Ordering::Less => -1,
@@ -279,13 +282,12 @@ impl PyVersion {
             .into_any())
         };
 
-        #[allow(clippy::cast_possible_wrap)]
-        tuples.push(mk_tuple(py, 2, self.inner.epoch as i64, "")?);
+        let sat = |n: u64| -> i64 { i64::try_from(n).unwrap_or(i64::MAX) };
+        tuples.push(mk_tuple(py, 2, sat(self.inner.epoch), "")?);
 
         for seg in prefix.iter().chain(suffix.iter()) {
-            #[allow(clippy::cast_possible_wrap)]
             let t = match seg {
-                Seg::Num(n) => mk_tuple(py, 2, *n as i64, "")?,
+                Seg::Num(n) => mk_tuple(py, 2, sat(*n), "")?,
                 Seg::Text(s) => {
                     let w = i64::from(tag_weight(s).unwrap_or(29));
                     mk_tuple(py, 1, w, s)?
@@ -297,6 +299,28 @@ impl PyVersion {
         tuples.push(mk_tuple(py, 1, 30, "")?);
 
         PyTuple::new(py, tuples)
+    }
+}
+
+fn resolve_eco(ecosystem: &str, first: Option<&Bound<'_, PyAny>>) -> PyResult<Ecosystem> {
+    if ecosystem.eq_ignore_ascii_case("auto") {
+        if let Some(obj) = first {
+            resolve_eco_for_obj("auto", obj)
+        } else {
+            Ok(Ecosystem::Generic)
+        }
+    } else {
+        eco_from_str(ecosystem)
+    }
+}
+
+fn extract_raw(obj: &Bound<'_, PyAny>) -> PyResult<String> {
+    if let Ok(v) = obj.extract::<PyRef<PyVersion>>() {
+        Ok(v.inner.raw.clone())
+    } else if let Ok(s) = obj.extract::<String>() {
+        Ok(s)
+    } else {
+        Err(PyTypeError::new_err("expected Version or str"))
     }
 }
 
@@ -376,15 +400,7 @@ fn sort_versions<'py>(
     versions: Vec<Bound<'py, PyAny>>,
     ecosystem: &str,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let eco = if ecosystem.eq_ignore_ascii_case("auto") {
-        if let Some(first) = versions.first() {
-            resolve_eco_for_obj("auto", first)?
-        } else {
-            Ecosystem::Generic
-        }
-    } else {
-        eco_from_str(ecosystem)?
-    };
+    let eco = resolve_eco(ecosystem, versions.first())?;
     let mut pairs: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
         .into_iter()
         .map(|obj| {
@@ -462,15 +478,7 @@ fn max_version<'py>(
     if versions.is_empty() {
         return Err(PyValueError::new_err("empty sequence"));
     }
-    let eco = if ecosystem.eq_ignore_ascii_case("auto") {
-        if let Some(first) = versions.first() {
-            resolve_eco_for_obj("auto", first)?
-        } else {
-            Ecosystem::Generic
-        }
-    } else {
-        eco_from_str(ecosystem)?
-    };
+    let eco = resolve_eco(ecosystem, versions.first())?;
     let mut parsed: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
         .into_iter()
         .map(|obj| {
@@ -490,15 +498,7 @@ fn min_version<'py>(
     if versions.is_empty() {
         return Err(PyValueError::new_err("empty sequence"));
     }
-    let eco = if ecosystem.eq_ignore_ascii_case("auto") {
-        if let Some(first) = versions.first() {
-            resolve_eco_for_obj("auto", first)?
-        } else {
-            Ecosystem::Generic
-        }
-    } else {
-        eco_from_str(ecosystem)?
-    };
+    let eco = resolve_eco(ecosystem, versions.first())?;
     let parsed: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
         .into_iter()
         .map(|obj| {
@@ -553,39 +553,36 @@ fn satisfies(version: &str, constraint: &str, ecosystem: &str) -> PyResult<bool>
     Ok(true)
 }
 
+fn is_prerelease_obj(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if let Ok(v) = obj.extract::<PyRef<PyVersion>>() {
+        Ok(v.inner.is_prerelease)
+    } else if let Ok(s) = obj.extract::<String>() {
+        Ok(parse(&s).is_prerelease)
+    } else {
+        Err(PyTypeError::new_err("expected Version or str"))
+    }
+}
+
 #[pyfunction(signature = (versions, ecosystem = "generic"))]
 fn stable_versions<'py>(
     _py: Python<'py>,
     versions: Vec<Bound<'py, PyAny>>,
     ecosystem: &str,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let eco = if ecosystem.eq_ignore_ascii_case("auto") {
-        if let Some(first) = versions.first() {
-            resolve_eco_for_obj("auto", first)?
-        } else {
-            Ecosystem::Generic
-        }
-    } else {
-        eco_from_str(ecosystem)?
-    };
+    let eco = resolve_eco(ecosystem, versions.first())?;
     versions
         .into_iter()
         .filter_map(|obj| {
-            let raw = if let Ok(v) = obj.extract::<PyRef<PyVersion>>() {
-                v.inner.raw.clone()
-            } else if let Ok(s) = obj.extract::<String>() {
-                s
-            } else {
-                return Some(Err(PyTypeError::new_err("expected Version or str")));
-            };
-            let parsed = parse(&raw);
-            if parsed.is_prerelease {
-                None
-            } else {
-                // Validate against ecosystem if needed
-                match parse_for_ecosystem(eco, &raw) {
-                    Ok(_) => Some(Ok(obj)),
-                    Err(e) => Some(Err(PyValueError::new_err(e))),
+            match is_prerelease_obj(&obj) {
+                Err(e) => Some(Err(e)),
+                Ok(true) => None, // skip pre-releases
+                Ok(false) => {
+                    // validate against ecosystem
+                    let raw = extract_raw(&obj).ok()?;
+                    match parse_for_ecosystem(eco, &raw) {
+                        Ok(_) => Some(Ok(obj)),
+                        Err(e) => Some(Err(PyValueError::new_err(e))),
+                    }
                 }
             }
         })
@@ -600,29 +597,14 @@ fn latest_stable<'py>(
     if versions.is_empty() {
         return Err(PyValueError::new_err("empty sequence"));
     }
-    let eco = if ecosystem.eq_ignore_ascii_case("auto") {
-        if let Some(first) = versions.first() {
-            resolve_eco_for_obj("auto", first)?
-        } else {
-            Ecosystem::Generic
-        }
-    } else {
-        eco_from_str(ecosystem)?
-    };
+    let eco = resolve_eco(ecosystem, versions.first())?;
     let mut stable: Vec<(ParsedRepr, Bound<'py, PyAny>)> = Vec::new();
     for obj in versions {
-        let raw = if let Ok(v) = obj.extract::<PyRef<PyVersion>>() {
-            v.inner.raw.clone()
-        } else if let Ok(s) = obj.extract::<String>() {
-            s
-        } else {
-            return Err(PyTypeError::new_err("expected Version or str"));
-        };
-        let parsed = parse(&raw);
-        if !parsed.is_prerelease {
-            let repr = extract_parsed_for_ecosystem(&obj, eco)?;
-            stable.push((repr, obj));
+        if is_prerelease_obj(&obj)? {
+            continue;
         }
+        let repr = extract_parsed_for_ecosystem(&obj, eco)?;
+        stable.push((repr, obj));
     }
     if stable.is_empty() {
         return Err(PyValueError::new_err("no stable versions found"));
