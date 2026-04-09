@@ -137,8 +137,15 @@ pub(crate) fn autodetect_ecosystem(version: &str) -> Ecosystem {
     if lower.contains("+deb") || lower.contains("+ubuntu") {
         return Ecosystem::Debian;
     }
-    if lower.contains(".el") || lower.contains(".fc") || lower.contains(".amzn") {
-        return Ecosystem::Rpm;
+    // Check .elN, .fcN, .amznN — require trailing digit to avoid false positives
+    // (e.g. "1.0.elegant" should not match .el)
+    for (marker, mlen) in [(".el", 3), (".fc", 3), (".amzn", 5)] {
+        if let Some(pos) = lower.find(marker) {
+            let after = pos + mlen;
+            if after < lower.len() && lower.as_bytes()[after].is_ascii_digit() {
+                return Ecosystem::Rpm;
+            }
+        }
     }
 
     // 3. Regex / Pattern matching
