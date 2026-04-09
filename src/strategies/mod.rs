@@ -109,6 +109,10 @@ pub(crate) struct NugetStrategy;
 pub(crate) struct ComposerStrategy;
 pub(crate) struct CalverStrategy;
 pub(crate) struct AlpineStrategy;
+pub(crate) struct CratesStrategy;
+pub(crate) struct HexStrategy;
+pub(crate) struct SwiftStrategy;
+pub(crate) struct DockerStrategy;
 
 impl VersionStrategy for GenericStrategy {
     fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
@@ -230,6 +234,66 @@ static NUGET_STRATEGY: NugetStrategy = NugetStrategy;
 static COMPOSER_STRATEGY: ComposerStrategy = ComposerStrategy;
 static CALVER_STRATEGY: CalverStrategy = CalverStrategy;
 static ALPINE_STRATEGY: AlpineStrategy = AlpineStrategy;
+static CRATES_STRATEGY: CratesStrategy = CratesStrategy;
+static HEX_STRATEGY: HexStrategy = HexStrategy;
+static SWIFT_STRATEGY: SwiftStrategy = SwiftStrategy;
+static DOCKER_STRATEGY: DockerStrategy = DockerStrategy;
+
+impl VersionStrategy for CratesStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        validate_crates(input)?;
+        parse_semver_strict(input).map(ParsedRepr::Semver)
+    }
+
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
+            _ => unreachable!("crates strategy received non-semver parsed values"),
+        }
+    }
+}
+
+impl VersionStrategy for HexStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        validate_hex(input)?;
+        parse_semver_strict(input).map(ParsedRepr::Semver)
+    }
+
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
+            _ => unreachable!("hex strategy received non-semver parsed values"),
+        }
+    }
+}
+
+impl VersionStrategy for SwiftStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        validate_swift(input)?;
+        parse_semver_strict(input).map(ParsedRepr::Semver)
+    }
+
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
+            _ => unreachable!("swift strategy received non-semver parsed values"),
+        }
+    }
+}
+
+impl VersionStrategy for DockerStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        validate_docker(input)?;
+        Ok(ParsedRepr::Generic(parse_generic(input)))
+    }
+
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Generic(a), ParsedRepr::Generic(b)) => cmp_parsed(a, b),
+            _ => unreachable!("docker strategy received non-generic parsed values"),
+        }
+    }
+}
 
 impl VersionStrategy for NugetStrategy {
     fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
@@ -289,12 +353,12 @@ impl VersionStrategy for AlpineStrategy {
 
 pub(crate) fn strategy_for(ecosystem: Ecosystem) -> &'static dyn VersionStrategy {
     match ecosystem {
-        Ecosystem::Generic | Ecosystem::Docker => &GENERIC_STRATEGY,
-        Ecosystem::Semver
-        | Ecosystem::Npm
-        | Ecosystem::Crates
-        | Ecosystem::Hex
-        | Ecosystem::Swift => &SEMVER_STRATEGY,
+        Ecosystem::Generic => &GENERIC_STRATEGY,
+        Ecosystem::Semver | Ecosystem::Npm => &SEMVER_STRATEGY,
+        Ecosystem::Crates => &CRATES_STRATEGY,
+        Ecosystem::Hex => &HEX_STRATEGY,
+        Ecosystem::Swift => &SWIFT_STRATEGY,
+        Ecosystem::Docker => &DOCKER_STRATEGY,
         Ecosystem::Pep440 => &PEP440_STRATEGY,
         Ecosystem::Debian => &DEBIAN_STRATEGY,
         Ecosystem::Rpm => &RPM_STRATEGY,
@@ -769,6 +833,32 @@ pub(crate) fn validate_alpine(input: &str) -> Result<(), String> {
     }
     if !s.as_bytes()[0].is_ascii_digit() {
         return Err(format!("Alpine version must start with a digit: '{input}'"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_crates(input: &str) -> Result<(), String> {
+    // Crates.io requires strict SemVer
+    parse_semver_strict(input)?;
+    Ok(())
+}
+
+pub(crate) fn validate_hex(input: &str) -> Result<(), String> {
+    // Hex (Elixir/Erlang) requires strict SemVer
+    parse_semver_strict(input)?;
+    Ok(())
+}
+
+pub(crate) fn validate_swift(input: &str) -> Result<(), String> {
+    // Swift PM requires strict SemVer
+    parse_semver_strict(input)?;
+    Ok(())
+}
+
+pub(crate) fn validate_docker(input: &str) -> Result<(), String> {
+    let s = input.trim();
+    if s.is_empty() {
+        return Err("empty Docker tag".to_string());
     }
     Ok(())
 }
