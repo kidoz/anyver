@@ -1,8 +1,9 @@
 """Comprehensive test suite for anyver library."""
+
 import pytest
+
 import anyver
 from anyver import Version
-
 
 # ============================================================================
 # Version object: construction, str, repr
@@ -255,21 +256,24 @@ class TestModuleCompare:
 
 
 class TestBasicNumeric:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("1", "2", -1),
-        ("2", "1", 1),
-        ("1", "1", 0),
-        ("1.0", "1.0.0", 0),
-        ("1.0.0", "1.0.1", -1),
-        ("1.0.1", "1.1.0", -1),
-        ("1.1.0", "2.0.0", -1),
-        ("10.0.0", "9.0.0", 1),
-        ("1.2.3", "1.2.3", 0),
-        ("0.0.1", "0.0.2", -1),
-        ("1.2", "1.10", -1),
-        ("1.0.0.0.0", "1.0.0", 0),
-        ("0", "0.0.0", 0),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("1", "2", -1),
+            ("2", "1", 1),
+            ("1", "1", 0),
+            ("1.0", "1.0.0", 0),
+            ("1.0.0", "1.0.1", -1),
+            ("1.0.1", "1.1.0", -1),
+            ("1.1.0", "2.0.0", -1),
+            ("10.0.0", "9.0.0", 1),
+            ("1.2.3", "1.2.3", 0),
+            ("0.0.1", "0.0.2", -1),
+            ("1.2", "1.10", -1),
+            ("1.0.0.0.0", "1.0.0", 0),
+            ("0", "0.0.0", 0),
+        ],
+    )
     def test_basic(self, a, b, expected):
         assert anyver.compare(a, b) == expected
 
@@ -280,12 +284,15 @@ class TestBasicNumeric:
 
 
 class TestVPrefix:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("v1.0.0", "1.0.0", 0),
-        ("V1.0.0", "1.0.0", 0),
-        ("v2.0.0", "v1.0.0", 1),
-        ("v0.1.0", "v0.2.0", -1),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("v1.0.0", "1.0.0", 0),
+            ("V1.0.0", "1.0.0", 0),
+            ("v2.0.0", "v1.0.0", 1),
+            ("v0.1.0", "v0.2.0", -1),
+        ],
+    )
     def test_vprefix(self, a, b, expected):
         assert anyver.compare(a, b) == expected
 
@@ -296,16 +303,19 @@ class TestVPrefix:
 
 
 class TestSemVerPrerelease:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("1.0.0-alpha", "1.0.0-alpha.1", -1),
-        ("1.0.0-alpha", "1.0.0-beta", -1),
-        ("1.0.0-beta", "1.0.0-rc", -1),
-        ("1.0.0-rc", "1.0.0", -1),
-        ("1.0.0-alpha", "1.0.0", -1),
-        ("1.0.0+build", "1.0.0", 0),
-        ("1.0.0+build.1", "1.0.0+build.2", 0),
-        ("1.0.0+20130313144700", "1.0.0", 0),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("1.0.0-alpha", "1.0.0-alpha.1", -1),
+            ("1.0.0-alpha", "1.0.0-beta", -1),
+            ("1.0.0-beta", "1.0.0-rc", -1),
+            ("1.0.0-rc", "1.0.0", -1),
+            ("1.0.0-alpha", "1.0.0", -1),
+            ("1.0.0+build", "1.0.0", 0),
+            ("1.0.0+build.1", "1.0.0+build.2", 0),
+            ("1.0.0+20130313144700", "1.0.0", 0),
+        ],
+    )
     def test_semver(self, a, b, expected):
         assert anyver.compare(a, b) == expected
 
@@ -316,14 +326,17 @@ class TestSemVerPrerelease:
 
 
 class TestSemVerStrict:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("1.0.0-alpha", "1.0.0-alpha.1", -1),
-        ("1.0.0-alpha.1", "1.0.0-alpha.beta", -1),
-        ("1.0.0-beta.2", "1.0.0-beta.11", -1),
-        ("1.0.0-rc.1", "1.0.0", -1),
-        ("1.0.0+build", "1.0.0", 0),
-        ("0.0.0", "0.0.1", -1),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("1.0.0-alpha", "1.0.0-alpha.1", -1),
+            ("1.0.0-alpha.1", "1.0.0-alpha.beta", -1),
+            ("1.0.0-beta.2", "1.0.0-beta.11", -1),
+            ("1.0.0-rc.1", "1.0.0", -1),
+            ("1.0.0+build", "1.0.0", 0),
+            ("0.0.0", "0.0.1", -1),
+        ],
+    )
     def test_strict(self, a, b, expected):
         assert anyver.compare_semver_strict(a, b) == expected
 
@@ -344,22 +357,28 @@ class TestEcosystemDispatch:
 
     def test_compare_semver_ecosystem(self):
         # Strict SemVer: numeric prerelease identifiers sort before alpha
-        assert anyver.compare(
-            "1.0.0-alpha.1",
-            "1.0.0-alpha.beta",
-            ecosystem="semver",
-        ) == -1
+        assert (
+            anyver.compare(
+                "1.0.0-alpha.1",
+                "1.0.0-alpha.beta",
+                ecosystem="semver",
+            )
+            == -1
+        )
 
     def test_version_compare_semver_ecosystem(self):
         v = Version("1.0.0-alpha.1")
         assert v.compare("1.0.0-alpha.beta", ecosystem="semver") == -1
 
     def test_module_compare_version_inputs_semver_ecosystem(self):
-        assert anyver.compare(
-            Version("1.0.0-alpha.1"),
-            Version("1.0.0-alpha.beta"),
-            ecosystem="semver",
-        ) == -1
+        assert (
+            anyver.compare(
+                Version("1.0.0-alpha.1"),
+                Version("1.0.0-alpha.beta"),
+                ecosystem="semver",
+            )
+            == -1
+        )
 
     def test_sort_semver_ecosystem(self):
         values = ["1.0.0-alpha.beta", "1.0.0-alpha.1", "1.0.0"]
@@ -393,17 +412,20 @@ class TestEcosystemDispatch:
 
 
 class TestPEP440:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("1.0a1", "1.0a2", -1),
-        ("1.0a2", "1.0b1", -1),
-        ("1.0b1", "1.0rc1", -1),
-        ("1.0rc1", "1.0", -1),
-        ("1.0.dev1", "1.0a1", -1),
-        ("1.0.dev1", "1.0", -1),
-        ("1.0", "1.0.post1", -1),
-        ("1.0.post1", "1.0.post2", -1),
-        ("1!0.1", "2.0", 1),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("1.0a1", "1.0a2", -1),
+            ("1.0a2", "1.0b1", -1),
+            ("1.0b1", "1.0rc1", -1),
+            ("1.0rc1", "1.0", -1),
+            ("1.0.dev1", "1.0a1", -1),
+            ("1.0.dev1", "1.0", -1),
+            ("1.0", "1.0.post1", -1),
+            ("1.0.post1", "1.0.post2", -1),
+            ("1!0.1", "2.0", 1),
+        ],
+    )
     def test_pep440(self, a, b, expected):
         assert anyver.compare(a, b) == expected
 
@@ -414,15 +436,18 @@ class TestPEP440:
 
 
 class TestDebian:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("1.0~alpha", "1.0~beta", -1),
-        ("1.0~rc1", "1.0", -1),
-        ("1.0~alpha", "1.0", -1),
-        ("1:0.1", "2.0", 1),
-        ("2:1.0", "1:2.0", 1),
-        ("0:1.0", "1.0", 0),
-        ("1.0+deb9u1", "1.0+deb9u2", 0),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("1.0~alpha", "1.0~beta", -1),
+            ("1.0~rc1", "1.0", -1),
+            ("1.0~alpha", "1.0", -1),
+            ("1:0.1", "2.0", 1),
+            ("2:1.0", "1:2.0", 1),
+            ("0:1.0", "1.0", 0),
+            ("1.0+deb9u1", "1.0+deb9u2", 0),
+        ],
+    )
     def test_debian(self, a, b, expected):
         assert anyver.compare(a, b) == expected
 
@@ -433,20 +458,23 @@ class TestDebian:
 
 
 class TestRPM:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("1.0~rc1", "1.0", -1),
-        ("1.0", "1.0^git1", -1),
-        ("1.0-1^git1", "1.0-1.fc33", -1),
-        # Native RPM tests for caret
-        ("1.0^", "1.0", 1),
-        ("1.0", "1.0^", -1),
-        ("1.0^git1", "1.0", 1),
-        ("1.0^git1", "1.0^git2", -1),
-        ("1.0^git1", "1.01", -1),
-        ("1.0^20160101", "1.0.1", -1),
-        ("1.0~rc1^git1", "1.0~rc1", 1),
-        ("1.0^git1~pre", "1.0^git1", -1),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("1.0~rc1", "1.0", -1),
+            ("1.0", "1.0^git1", -1),
+            ("1.0-1^git1", "1.0-1.fc33", -1),
+            # Native RPM tests for caret
+            ("1.0^", "1.0", 1),
+            ("1.0", "1.0^", -1),
+            ("1.0^git1", "1.0", 1),
+            ("1.0^git1", "1.0^git2", -1),
+            ("1.0^git1", "1.01", -1),
+            ("1.0^20160101", "1.0.1", -1),
+            ("1.0~rc1^git1", "1.0~rc1", 1),
+            ("1.0^git1~pre", "1.0^git1", -1),
+        ],
+    )
     def test_rpm(self, a, b, expected):
         assert anyver.compare(a, b, ecosystem="rpm") == expected
 
@@ -457,12 +485,15 @@ class TestRPM:
 
 
 class TestGoModules:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("v1.0.0", "v1.0.1", -1),
-        ("v1.0.0-alpha", "v1.0.0", -1),
-        ("v2.0.0+incompatible", "v2.0.0", 0),
-        ("v2.0.0+incompatible", "v2.0.1+incompatible", -1),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("v1.0.0", "v1.0.1", -1),
+            ("v1.0.0-alpha", "v1.0.0", -1),
+            ("v2.0.0+incompatible", "v2.0.0", 0),
+            ("v2.0.0+incompatible", "v2.0.1+incompatible", -1),
+        ],
+    )
     def test_go(self, a, b, expected):
         assert anyver.compare(a, b) == expected
 
@@ -473,13 +504,16 @@ class TestGoModules:
 
 
 class TestRubyGems:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("1.0.0.pre", "1.0.0", -1),
-        ("1.0.0.alpha", "1.0.0.beta", -1),
-        ("1.0.0.beta", "1.0.0.rc1", -1),
-        ("1.0.0.rc1", "1.0.0", -1),
-        ("3.2", "3.10", -1),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("1.0.0.pre", "1.0.0", -1),
+            ("1.0.0.alpha", "1.0.0.beta", -1),
+            ("1.0.0.beta", "1.0.0.rc1", -1),
+            ("1.0.0.rc1", "1.0.0", -1),
+            ("3.2", "3.10", -1),
+        ],
+    )
     def test_ruby(self, a, b, expected):
         assert anyver.compare(a, b) == expected
 
@@ -490,12 +524,15 @@ class TestRubyGems:
 
 
 class TestMaven:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("1.0-alpha-1", "1.0-beta-1", -1),
-        ("1.0-beta-1", "1.0-rc-1", -1),
-        ("1.0-SNAPSHOT", "1.0", -1),
-        ("1.0", "1.0-sp-1", -1),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("1.0-alpha-1", "1.0-beta-1", -1),
+            ("1.0-beta-1", "1.0-rc-1", -1),
+            ("1.0-SNAPSHOT", "1.0", -1),
+            ("1.0", "1.0-sp-1", -1),
+        ],
+    )
     def test_maven(self, a, b, expected):
         assert anyver.compare(a, b) == expected
 
@@ -506,18 +543,21 @@ class TestMaven:
 
 
 class TestRealWorld:
-    @pytest.mark.parametrize("a,b,expected", [
-        ("4.2", "5.0a1", -1),
-        ("5.0a1", "5.0b1", -1),
-        ("5.0b1", "5.0rc1", -1),
-        ("5.0rc1", "5.0", -1),
-        ("7.1.0.beta1", "7.1.0.rc1", -1),
-        ("7.1.0.rc1", "7.1.0", -1),
-        ("18.17.0", "20.0.0", -1),
-        ("5.15.0", "6.1.0", -1),
-        ("5.3.30", "6.0.0", -1),
-        ("2.31.0", "2.32.0", -1),
-    ])
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("4.2", "5.0a1", -1),
+            ("5.0a1", "5.0b1", -1),
+            ("5.0b1", "5.0rc1", -1),
+            ("5.0rc1", "5.0", -1),
+            ("7.1.0.beta1", "7.1.0.rc1", -1),
+            ("7.1.0.rc1", "7.1.0", -1),
+            ("18.17.0", "20.0.0", -1),
+            ("5.15.0", "6.1.0", -1),
+            ("5.3.30", "6.0.0", -1),
+            ("2.31.0", "2.32.0", -1),
+        ],
+    )
     def test_real_world(self, a, b, expected):
         assert anyver.compare(a, b) == expected
 
@@ -530,14 +570,33 @@ class TestRealWorld:
 class TestSortVersions:
     def test_basic_sort(self):
         assert anyver.sort_versions(["2.0", "1.0-alpha", "1.0", "0.1"]) == [
-            "0.1", "1.0-alpha", "1.0", "2.0"
+            "0.1",
+            "1.0-alpha",
+            "1.0",
+            "2.0",
         ]
 
     def test_full_sort(self):
-        versions = ["2.0.0", "1.0.0-alpha", "1.0.0", "0.1.0",
-                     "1.0.0-rc.1", "1.0.0-beta", "3.0.0", "0.0.1"]
-        expected = ["0.0.1", "0.1.0", "1.0.0-alpha", "1.0.0-beta",
-                    "1.0.0-rc.1", "1.0.0", "2.0.0", "3.0.0"]
+        versions = [
+            "2.0.0",
+            "1.0.0-alpha",
+            "1.0.0",
+            "0.1.0",
+            "1.0.0-rc.1",
+            "1.0.0-beta",
+            "3.0.0",
+            "0.0.1",
+        ]
+        expected = [
+            "0.0.1",
+            "0.1.0",
+            "1.0.0-alpha",
+            "1.0.0-beta",
+            "1.0.0-rc.1",
+            "1.0.0",
+            "2.0.0",
+            "3.0.0",
+        ]
         assert anyver.sort_versions(versions) == expected
 
 
@@ -548,9 +607,7 @@ class TestSortVersions:
 
 class TestBatchCompare:
     def test_batch(self):
-        assert anyver.batch_compare([
-            ("1.0", "2.0"), ("2.0", "1.0"), ("1.0", "1.0")
-        ]) == [-1, 1, 0]
+        assert anyver.batch_compare([("1.0", "2.0"), ("2.0", "1.0"), ("1.0", "1.0")]) == [-1, 1, 0]
 
 
 # ============================================================================
@@ -610,6 +667,7 @@ class TestToDict:
         d = v.to_dict()
         assert d == {
             "raw": "1.2.3-rc.1+build.42",
+            "ecosystem": v.ecosystem,
             "epoch": 0,
             "major": 1,
             "minor": 2,
@@ -618,6 +676,19 @@ class TestToDict:
             "is_prerelease": True,
             "is_postrelease": False,
         }
+
+    def test_from_dict_roundtrip(self):
+        for raw, eco in [
+            ("1.2.3", "auto"),
+            ("1!2.3.4.post1+local", "pep440"),
+            ("v2.0.0+incompatible", "go"),
+            ("1.0~rc1", "debian"),
+        ]:
+            v = Version(raw, ecosystem=eco)
+            v2 = Version.from_dict(v.to_dict())
+            assert v == v2
+            assert v.ecosystem == v2.ecosystem
+            assert v.raw == v2.raw
 
 
 # ============================================================================
@@ -630,13 +701,13 @@ class TestSortKey:
         v = Version("1.2.3-rc.1+build.42")
         sk = v.sort_key()
         assert sk == (
-            (2, 0, ""),       # epoch
-            (2, 1, ""),       # major
-            (2, 2, ""),       # minor
-            (2, 3, ""),       # patch
-            (1, 20, "rc"),    # rc (weight 20)
-            (2, 1, ""),       # 1
-            (1, 30, ""),      # release sentinel
+            (2, 0, ""),  # epoch
+            (2, 1, ""),  # major
+            (2, 2, ""),  # minor
+            (2, 3, ""),  # patch
+            (1, 20, "rc"),  # rc (weight 20)
+            (2, 1, ""),  # 1
+            (1, 30, ""),  # release sentinel
         )
 
     def test_isomorphism_simple(self):
@@ -711,11 +782,13 @@ class TestMixedTypes:
         assert [str(v) for v in result] == ["1.0", "2.0", "3.0"]
 
     def test_batch_compare_mixed(self):
-        result = anyver.batch_compare([
-            (Version("1.0"), "2.0"),
-            ("2.0", Version("1.0")),
-            (Version("1.0"), Version("1.0")),
-        ])
+        result = anyver.batch_compare(
+            [
+                (Version("1.0"), "2.0"),
+                ("2.0", Version("1.0")),
+                (Version("1.0"), Version("1.0")),
+            ]
+        )
         assert result == [-1, 1, 0]
 
     def test_max_version_mixed(self):
@@ -792,3 +865,368 @@ class TestOverflow:
 
     def test_overflow_greater_than_normal(self):
         assert anyver.compare("99999999999999999999999999999999", "999") == 1
+
+
+# ============================================================================
+# satisfies() — constraint matching (single + compound)
+# ============================================================================
+
+
+class TestSatisfies:
+    @pytest.mark.parametrize(
+        "version,constraint,expected",
+        [
+            # single-op constraints
+            ("1.5.0", ">=1.0.0", True),
+            ("1.5.0", ">=2.0.0", False),
+            ("1.5.0", "<=2.0.0", True),
+            ("1.5.0", "<=1.0.0", False),
+            ("1.5.0", ">1.0.0", True),
+            ("1.5.0", ">1.5.0", False),
+            ("1.5.0", "<2.0.0", True),
+            ("1.5.0", "<1.5.0", False),
+            ("1.5.0", "==1.5.0", True),
+            ("1.5.0", "==1.5.1", False),
+            ("1.5.0", "!=1.0.0", True),
+            ("1.5.0", "!=1.5.0", False),
+            # trailing-zero equivalence flows through
+            ("1.0.0", "==1.0", True),
+            ("1.0", "==1.0.0", True),
+        ],
+    )
+    def test_single_constraint(self, version, constraint, expected):
+        assert anyver.satisfies(version, constraint) is expected
+
+    @pytest.mark.parametrize(
+        "version,constraint,expected",
+        [
+            # ranges
+            ("1.5.0", ">=1.0.0,<2.0.0", True),
+            ("2.0.0", ">=1.0.0,<2.0.0", False),  # upper bound exclusive
+            ("0.9.0", ">=1.0.0,<2.0.0", False),  # below lower
+            # ranges with spaces (parse_constraint trims each part)
+            ("1.5.0", ">=1.0.0, <2.0.0", True),
+            ("1.5.0", " >= 1.0.0 , < 2.0.0 ", True),
+            # three-part constraint — all must match
+            ("1.5.0", ">=1.0.0,<2.0.0,!=1.5.1", True),
+            ("1.5.1", ">=1.0.0,<2.0.0,!=1.5.1", False),
+        ],
+    )
+    def test_compound_constraint(self, version, constraint, expected):
+        assert anyver.satisfies(version, constraint) is expected
+
+    def test_ecosystem_semver_strict(self):
+        # In strict SemVer, numeric prerelease identifiers sort before alpha.
+        assert anyver.satisfies("1.0.0-alpha.1", "<1.0.0-alpha.beta", ecosystem="semver") is True
+
+    def test_invalid_constraint_raises(self):
+        with pytest.raises(ValueError):
+            anyver.satisfies("1.0.0", "1.0.0")  # no operator
+
+    def test_invalid_version_for_ecosystem_raises(self):
+        with pytest.raises(ValueError):
+            anyver.satisfies("1.0", ">=1.0.0", ecosystem="semver")
+
+
+# ============================================================================
+# stable_versions()
+# ============================================================================
+
+
+class TestStableVersions:
+    def test_filters_prereleases(self):
+        versions = ["1.0.0", "2.0.0-alpha", "2.0.0-rc1", "2.0.0", "1.5.0-beta"]
+        result = anyver.stable_versions(versions)
+        assert result == ["1.0.0", "2.0.0"]
+
+    def test_keeps_postreleases(self):
+        # post-releases are stable
+        versions = ["1.0.0", "1.0.post1", "1.0.0-alpha"]
+        result = anyver.stable_versions(versions)
+        assert result == ["1.0.0", "1.0.post1"]
+
+    def test_empty_input(self):
+        assert anyver.stable_versions([]) == []
+
+    def test_all_prerelease(self):
+        assert anyver.stable_versions(["1.0-alpha", "2.0-rc1"]) == []
+
+    def test_accepts_version_objects(self):
+        versions = [Version("1.0.0"), Version("2.0.0-rc1"), Version("2.0.0")]
+        result = anyver.stable_versions(versions)
+        assert [str(v) for v in result] == ["1.0.0", "2.0.0"]
+
+    def test_mixed_types(self):
+        versions = ["1.0.0", Version("2.0.0-rc1"), Version("2.0.0"), "1.5.0-beta"]
+        result = anyver.stable_versions(versions)
+        assert [str(v) for v in result] == ["1.0.0", "2.0.0"]
+
+    def test_preserves_order(self):
+        # Filtering must not reorder
+        versions = ["2.0.0", "1.0.0", "3.0.0-rc1", "1.5.0"]
+        assert anyver.stable_versions(versions) == ["2.0.0", "1.0.0", "1.5.0"]
+
+    def test_ecosystem_validation_rejects_invalid(self):
+        with pytest.raises(ValueError):
+            anyver.stable_versions(["1.0"], ecosystem="semver")
+
+
+# ============================================================================
+# latest_stable()
+# ============================================================================
+
+
+class TestLatestStable:
+    def test_picks_latest_stable(self):
+        versions = ["1.0.0", "2.0.0-rc1", "2.0.0", "1.5.0-beta"]
+        assert anyver.latest_stable(versions) == "2.0.0"
+
+    def test_ignores_prereleases_higher_than_stable(self):
+        # A prerelease of a higher version must not beat a lower stable
+        versions = ["1.0.0", "2.0.0-rc1"]
+        assert anyver.latest_stable(versions) == "1.0.0"
+
+    def test_includes_postreleases(self):
+        versions = ["1.0.0", "1.0.post1"]
+        assert anyver.latest_stable(versions) == "1.0.post1"
+
+    def test_accepts_version_objects(self):
+        versions = [Version("1.0.0"), Version("2.0.0-rc1"), Version("2.0.0")]
+        result = anyver.latest_stable(versions)
+        assert str(result) == "2.0.0"
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError):
+            anyver.latest_stable([])
+
+    def test_all_prerelease_raises(self):
+        with pytest.raises(ValueError):
+            anyver.latest_stable(["1.0-alpha", "2.0-rc1"])
+
+    def test_semver_ecosystem(self):
+        versions = ["1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0"]
+        assert anyver.latest_stable(versions, ecosystem="semver") == "1.0.0"
+
+
+# ============================================================================
+# bump_major / bump_minor / bump_patch
+# ============================================================================
+
+
+class TestBumpHelpers:
+    @pytest.mark.parametrize(
+        "version,expected",
+        [
+            ("1.2.3", "2.0.0"),
+            ("0.0.1", "1.0.0"),
+            ("5", "6.0.0"),  # single-segment input
+            ("1.2.3-alpha", "2.0.0"),  # prerelease stripped
+            ("v1.2.3", "2.0.0"),  # v-prefix handled
+        ],
+    )
+    def test_bump_major(self, version, expected):
+        assert anyver.bump_major(version) == expected
+
+    @pytest.mark.parametrize(
+        "version,expected",
+        [
+            ("1.2.3", "1.3.0"),
+            ("0.0.1", "0.1.0"),
+            ("1.2.3-alpha", "1.3.0"),
+            ("v1.2.3", "1.3.0"),
+        ],
+    )
+    def test_bump_minor(self, version, expected):
+        assert anyver.bump_minor(version) == expected
+
+    @pytest.mark.parametrize(
+        "version,expected",
+        [
+            ("1.2.3", "1.2.4"),
+            ("0.0.0", "0.0.1"),
+            ("1.2.3-alpha", "1.2.4"),
+            ("v1.2.3", "1.2.4"),
+        ],
+    )
+    def test_bump_patch(self, version, expected):
+        assert anyver.bump_patch(version) == expected
+
+    def test_bump_major_no_numeric_first_segment(self):
+        # Non-numeric first segment → defaults to 1.0.0
+        assert anyver.bump_major("alpha") == "1.0.0"
+
+
+# ============================================================================
+# bump_prerelease / next_stable
+# ============================================================================
+
+
+class TestBumpPrerelease:
+    def test_fresh_from_release(self):
+        assert anyver.bump_prerelease("1.2.3") == "1.2.3-alpha.0"
+
+    def test_increment_same_tag(self):
+        assert anyver.bump_prerelease("1.2.3-alpha.1") == "1.2.3-alpha.2"
+
+    def test_tag_switch_resets_counter(self):
+        assert anyver.bump_prerelease("1.2.3-alpha.5", "beta") == "1.2.3-beta.0"
+
+    def test_custom_tag(self):
+        assert anyver.bump_prerelease("1.2.3", "rc") == "1.2.3-rc.0"
+        assert anyver.bump_prerelease("1.2.3-rc.2", "rc") == "1.2.3-rc.3"
+
+    def test_missing_parts_fill_zero(self):
+        assert anyver.bump_prerelease("1") == "1.0.0-alpha.0"
+
+
+class TestNextStable:
+    @pytest.mark.parametrize(
+        "version,expected",
+        [
+            ("1.2.3", "1.2.3"),
+            ("1.2.3-alpha.1", "1.2.3"),
+            ("1.2.3-rc.2+build", "1.2.3"),
+            ("v1.0", "1.0.0"),
+            ("1.2", "1.2.0"),
+        ],
+    )
+    def test_strip_prerelease(self, version, expected):
+        assert anyver.next_stable(version) == expected
+
+
+# ============================================================================
+# Pickle / copy / str comparison / classmethods
+# ============================================================================
+
+
+class TestPickle:
+    def test_roundtrip(self):
+        import pickle
+
+        v = Version("1!2.3.4.post1+local", ecosystem="pep440")
+        p = pickle.loads(pickle.dumps(v))
+        assert p == v
+        assert p.ecosystem == v.ecosystem
+        assert p.raw == v.raw
+
+    def test_roundtrip_auto(self):
+        import pickle
+
+        v = Version("1.2.3")
+        p = pickle.loads(pickle.dumps(v))
+        assert p == v
+        assert p.ecosystem == v.ecosystem
+
+    def test_deepcopy(self):
+        import copy
+
+        v = Version("1.0~rc1", ecosystem="debian")
+        d = copy.deepcopy(v)
+        assert d == v
+        assert d.ecosystem == v.ecosystem
+
+
+class TestStrComparison:
+    def test_eq_str(self):
+        assert Version("1.0") == "1.0.0"
+
+    def test_lt_str(self):
+        assert Version("1.0") < "2.0"
+
+    def test_ge_str(self):
+        assert Version("2.0") >= "1.5"
+
+    def test_ne_str(self):
+        assert Version("1.0") != "2.0"
+
+    def test_notimplemented_other_type(self):
+        # Non-Version, non-str falls back to Python's rules → != returns True,
+        # == returns False; no TypeError.
+        assert (Version("1.0") == 123) is False
+        assert (Version("1.0") != 123) is True
+
+    def test_ordering_with_other_type_raises(self):
+        import pytest
+
+        with pytest.raises(TypeError):
+            _ = Version("1.0") < 123
+
+
+class TestParseClassmethods:
+    def test_parse(self):
+        v = Version.parse("1.2.3")
+        assert v == Version("1.2.3")
+
+    def test_parse_with_ecosystem(self):
+        v = Version.parse("1!2.0", ecosystem="pep440")
+        assert v.epoch == 1
+
+    def test_parse_raises_on_invalid(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            Version.parse("not-a-version", ecosystem="semver")
+
+    def test_try_parse_valid(self):
+        assert Version.try_parse("1.2.3") == Version("1.2.3")
+
+    def test_try_parse_invalid(self):
+        assert Version.try_parse("not-a-version", ecosystem="semver") is None
+
+
+# ============================================================================
+# Extended satisfies ranges
+# ============================================================================
+
+
+class TestSatisfiesShorthand:
+    @pytest.mark.parametrize(
+        "version,constraint,expected",
+        [
+            # caret
+            ("1.2.3", "^1.0.0", True),
+            ("1.9.9", "^1.0.0", True),
+            ("2.0.0", "^1.0.0", False),
+            ("0.2.5", "^0.2.3", True),
+            ("0.3.0", "^0.2.3", False),
+            ("0.0.3", "^0.0.3", True),
+            ("0.0.4", "^0.0.3", False),
+            # tilde
+            ("1.2.5", "~1.2.3", True),
+            ("1.3.0", "~1.2.3", False),
+            ("1.2.0", "~1.2", True),
+            ("1.3.0", "~1.2", False),
+            ("1.5.0", "~1", True),
+            ("2.0.0", "~1", False),
+            # x-range
+            ("1.2.5", "1.2.x", True),
+            ("1.3.0", "1.2.x", False),
+            ("1.0.0", "1.x", True),
+            ("2.0.0", "1.x", False),
+            ("99.0.0", "*", True),
+            # OR
+            ("1.5.0", "^1.0.0 || ^2.0.0", True),
+            ("2.3.0", "^1.0.0 || ^2.0.0", True),
+            ("3.0.0", "^1.0.0 || ^2.0.0", False),
+            # mixed
+            ("1.5.0", ">=1.0.0,<2.0.0", True),
+            ("1.5.0", ">=1.0.0 || >=3.0.0", True),
+        ],
+    )
+    def test_shorthand(self, version, constraint, expected):
+        assert anyver.satisfies(version, constraint) is expected
+
+
+class TestModuleSurface:
+    def test_version_attribute(self):
+        # should be a string, not empty
+        assert isinstance(anyver.__version__, str)
+        assert anyver.__version__
+
+    def test_py_typed_marker_present(self):
+        import os
+
+        import anyver as pkg
+
+        pkg_dir = os.path.dirname(pkg.__file__)
+        assert os.path.exists(os.path.join(pkg_dir, "py.typed"))

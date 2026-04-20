@@ -1,7 +1,7 @@
 use pyo3::basic::CompareOp;
 use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyDict, PyTuple, PyType};
 use std::cmp::Ordering;
 
 use crate::parser::{Ecosystem, ParsedVersion, Seg, autodetect_ecosystem, parse, tag_weight};
@@ -36,7 +36,7 @@ fn richcmp_ord(a: &PyVersion, b: &PyVersion) -> Ordering {
     }
 }
 
-#[pyclass(name = "Version", from_py_object)]
+#[pyclass(name = "Version", module = "anyver", from_py_object)]
 #[derive(Debug, Clone)]
 pub(crate) struct PyVersion {
     inner: ParsedVersion,
@@ -65,16 +65,31 @@ impl PyVersion {
         Ok(PyVersion { inner, eco, repr })
     }
 
-    fn __richcmp__(&self, other: &PyVersion, op: CompareOp) -> bool {
-        let ord = richcmp_ord(self, other);
-        match op {
+    fn __richcmp__<'py>(
+        &self,
+        py: Python<'py>,
+        other: &Bound<'py, PyAny>,
+        op: CompareOp,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let ord = if let Ok(v) = other.extract::<PyRef<PyVersion>>() {
+            richcmp_ord(self, &v)
+        } else if let Ok(s) = other.extract::<String>() {
+            // Parse the str with this Version's ecosystem, so the left-hand
+            // side's declared ecosystem wins — matching Version.compare(str).
+            let parsed = parse_for_ecosystem(self.eco, &s).map_err(PyValueError::new_err)?;
+            compare_for_ecosystem(self.eco, &self.repr, &parsed)
+        } else {
+            return Ok(py.NotImplemented().into_bound(py));
+        };
+        let result = match op {
             CompareOp::Lt => ord == Ordering::Less,
             CompareOp::Le => ord != Ordering::Greater,
             CompareOp::Eq => ord == Ordering::Equal,
             CompareOp::Ne => ord != Ordering::Equal,
             CompareOp::Gt => ord == Ordering::Greater,
             CompareOp::Ge => ord != Ordering::Less,
-        }
+        };
+        Ok(result.into_pyobject(py)?.to_owned().into_any())
     }
 
     fn __str__(&self) -> &str {
@@ -233,6 +248,7 @@ impl PyVersion {
     fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
         dict.set_item("raw", &self.inner.raw)?;
+        dict.set_item("ecosystem", self.eco.as_str())?;
         dict.set_item("epoch", self.inner.epoch)?;
         dict.set_item("major", self.major())?;
         dict.set_item("minor", self.minor())?;
@@ -241,6 +257,49 @@ impl PyVersion {
         dict.set_item("is_prerelease", self.inner.is_prerelease)?;
         dict.set_item("is_postrelease", self.inner.is_postrelease)?;
         Ok(dict)
+    }
+
+    /// Reconstruct a Version from the dict produced by `to_dict()`.
+    #[classmethod]
+    fn from_dict(_cls: &Bound<'_, PyType>, data: &Bound<'_, PyDict>) -> PyResult<Self> {
+        let raw: String = match data.get_item("raw")? {
+            Some(v) => v.extract()?,
+            None => return Err(PyValueError::new_err("missing 'raw' key")),
+        };
+        let eco: String = match data.get_item("ecosystem")? {
+            Some(v) => v.extract()?,
+            None => "auto".to_string(),
+        };
+        PyVersion::new(&raw, &eco)
+    }
+
+    /// Classmethod alternative to the constructor; raises `ValueError` on invalid input.
+    #[classmethod]
+    #[pyo3(signature = (version, ecosystem = "auto"))]
+    fn parse(_cls: &Bound<'_, PyType>, version: &str, ecosystem: &str) -> PyResult<Self> {
+        PyVersion::new(version, ecosystem)
+    }
+
+    /// Fallible parse; returns None instead of raising on invalid input.
+    #[staticmethod]
+    #[pyo3(signature = (version, ecosystem = "auto"))]
+    fn try_parse(version: &str, ecosystem: &str) -> Option<Self> {
+        PyVersion::new(version, ecosystem).ok()
+    }
+
+    /// Pickle support. Restores via `Version(raw, ecosystem)` so the parsed
+    /// state is rebuilt identically.
+    fn __reduce__<'py>(slf: &Bound<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let inner = slf.borrow();
+        let args = PyTuple::new(
+            py,
+            vec![
+                inner.inner.raw.clone().into_pyobject(py)?.into_any(),
+                inner.eco.as_str().into_pyobject(py)?.into_any(),
+            ],
+        )?;
+        let type_obj = slf.get_type();
+        PyTuple::new(py, vec![type_obj.into_any(), args.into_any()])
     }
 
     fn sort_key<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
@@ -532,25 +591,143 @@ pub(crate) fn parse_constraint(spec: &str) -> Result<(&str, &str), String> {
     }
 }
 
+/// Parse 1-3 numeric parts from a version prefix, treating `x`, `X`, and `*`
+/// as wildcards. Returns `Some((parts, wildcard_depth))` where
+/// `wildcard_depth` is 3 if no wildcard, else the index at which it appears.
+fn parse_num_prefix(input: &str) -> Option<(Vec<u64>, usize)> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::with_capacity(3);
+    let mut wildcard_at: Option<usize> = None;
+    for (i, raw) in s.split('.').enumerate() {
+        if i >= 3 {
+            break;
+        }
+        if raw == "x" || raw == "X" || raw == "*" {
+            wildcard_at = Some(i);
+            break;
+        }
+        let n: u64 = raw.parse().ok()?;
+        parts.push(n);
+    }
+    if parts.is_empty() && wildcard_at != Some(0) {
+        return None;
+    }
+    Some((parts, wildcard_at.unwrap_or(3)))
+}
+
+fn fmt_triple(major: u64, minor: u64, patch: u64) -> String {
+    format!("{major}.{minor}.{patch}")
+}
+
+/// Expand a shorthand range token (`^1.2.3`, `~1.2`, `1.2.x`, `*`) into a list
+/// of basic constraints. Bare constraints (`>=1.0.0`, `==1.0.0`) pass through.
+fn expand_shorthand(token: &str) -> Result<Vec<(String, String)>, String> {
+    let t = token.trim();
+    if t.is_empty() {
+        return Err("empty constraint".to_string());
+    }
+    if t == "*" || t == "x" || t == "X" {
+        return Ok(vec![(">=".to_string(), "0.0.0".to_string())]);
+    }
+    // Caret: ^X.Y.Z — allow changes that don't modify the left-most non-zero.
+    if let Some(rest) = t.strip_prefix('^') {
+        let (parts, _) =
+            parse_num_prefix(rest).ok_or_else(|| format!("invalid caret range: '{t}'"))?;
+        let major = *parts.first().unwrap_or(&0);
+        let minor = *parts.get(1).unwrap_or(&0);
+        let patch = *parts.get(2).unwrap_or(&0);
+        let lower = fmt_triple(major, minor, patch);
+        let upper = if major > 0 {
+            fmt_triple(major + 1, 0, 0)
+        } else if minor > 0 {
+            fmt_triple(0, minor + 1, 0)
+        } else {
+            fmt_triple(0, 0, patch + 1)
+        };
+        return Ok(vec![(">=".to_string(), lower), ("<".to_string(), upper)]);
+    }
+    // Tilde: ~X.Y.Z — allow patch-level changes. ~X.Y == ~X.Y.0 == >=X.Y.0,<X.(Y+1).0.
+    if let Some(rest) = t.strip_prefix('~') {
+        let (parts, _) =
+            parse_num_prefix(rest).ok_or_else(|| format!("invalid tilde range: '{t}'"))?;
+        let major = *parts.first().unwrap_or(&0);
+        let minor = *parts.get(1).unwrap_or(&0);
+        let patch = *parts.get(2).unwrap_or(&0);
+        let lower = fmt_triple(major, minor, patch);
+        let upper = if parts.len() >= 2 {
+            fmt_triple(major, minor + 1, 0)
+        } else {
+            fmt_triple(major + 1, 0, 0)
+        };
+        return Ok(vec![(">=".to_string(), lower), ("<".to_string(), upper)]);
+    }
+    // x-range: 1.2.x, 1.x, 1.2.*
+    if t.contains(".x") || t.contains(".X") || t.contains(".*") {
+        let (parts, depth) =
+            parse_num_prefix(t).ok_or_else(|| format!("invalid x-range: '{t}'"))?;
+        let major = *parts.first().unwrap_or(&0);
+        let minor = *parts.get(1).unwrap_or(&0);
+        let lower = fmt_triple(major, minor, 0);
+        let upper =
+            if depth == 1 { fmt_triple(major + 1, 0, 0) } else { fmt_triple(major, minor + 1, 0) };
+        return Ok(vec![(">=".to_string(), lower), ("<".to_string(), upper)]);
+    }
+    // Bare constraint (>=, <=, ==, !=, >, <).
+    let (op, v) = parse_constraint(t)?;
+    Ok(vec![(op.to_string(), v.to_string())])
+}
+
+fn eval_op(op: &str, ord: Ordering) -> bool {
+    match op {
+        ">=" => ord != Ordering::Less,
+        "<=" => ord != Ordering::Greater,
+        ">" => ord == Ordering::Greater,
+        "<" => ord == Ordering::Less,
+        "==" => ord == Ordering::Equal,
+        "!=" => ord != Ordering::Equal,
+        _ => false,
+    }
+}
+
+/// Check whether `version` satisfies `constraint`.
+///
+/// Supported syntax:
+///   - Operators: `>=`, `<=`, `>`, `<`, `==`, `!=`
+///   - AND via comma: `>=1.0,<2.0`
+///   - OR via `||`: `^1.0 || ^2.0`
+///   - Shorthand: `^1.2.3`, `~1.2`, `1.2.x`, `*`
 #[pyfunction(signature = (version, constraint, ecosystem = "generic"))]
 fn satisfies(version: &str, constraint: &str, ecosystem: &str) -> PyResult<bool> {
-    for part in constraint.split(',') {
-        let (op, cv) = parse_constraint(part).map_err(PyValueError::new_err)?;
-        let ord = compare_str_with_ecosystem(version, cv, ecosystem)?;
-        let ok = match op {
-            ">=" => ord != Ordering::Less,
-            "<=" => ord != Ordering::Greater,
-            ">" => ord == Ordering::Greater,
-            "<" => ord == Ordering::Less,
-            "==" => ord == Ordering::Equal,
-            "!=" => ord != Ordering::Equal,
-            _ => unreachable!(),
-        };
-        if !ok {
-            return Ok(false);
+    // Evaluate OR branches left-to-right.
+    for branch in constraint.split("||") {
+        let mut branch_ok = true;
+        let mut branch_has_clause = false;
+        for part in branch.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            branch_has_clause = true;
+            let clauses = expand_shorthand(part).map_err(PyValueError::new_err)?;
+            for (op, cv) in clauses {
+                let ord = compare_str_with_ecosystem(version, &cv, ecosystem)?;
+                if !eval_op(&op, ord) {
+                    branch_ok = false;
+                    break;
+                }
+            }
+            if !branch_ok {
+                break;
+            }
+        }
+        if branch_has_clause && branch_ok {
+            return Ok(true);
         }
     }
-    Ok(true)
+    Ok(false)
 }
 
 fn is_prerelease_obj(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -655,8 +832,63 @@ fn bump_patch(version: &str) -> String {
     format!("{major}.{minor}.{patch}")
 }
 
+fn release_triple(v: &ParsedVersion) -> (u64, u64, u64) {
+    let major = match v.segments.first() {
+        Some(Seg::Num(n)) => *n,
+        _ => 0,
+    };
+    let minor = match v.segments.get(1) {
+        Some(Seg::Num(n)) => *n,
+        _ => 0,
+    };
+    let patch = match v.segments.get(2) {
+        Some(Seg::Num(n)) => *n,
+        _ => 0,
+    };
+    (major, minor, patch)
+}
+
+/// Bump the prerelease counter on a version.
+///
+/// Semantics:
+///   - If the version has a prerelease segment with the same `tag`, the
+///     first numeric segment following that tag is incremented.
+///   - Otherwise the existing prerelease is replaced with `-{tag}.0`.
+///   - If no release triple is present, it's filled with `0.0.0`.
+#[pyfunction]
+#[pyo3(signature = (version, tag = "alpha"))]
+fn bump_prerelease(version: &str, tag: &str) -> String {
+    let v = parse(version);
+    let (major, minor, patch) = release_triple(&v);
+    let tag_lower = tag.to_ascii_lowercase();
+
+    // Find existing prerelease tag index
+    let first_text = v.segments.iter().position(|s| matches!(s, Seg::Text(_)));
+    if let Some(pos) = first_text
+        && let Seg::Text(existing) = &v.segments[pos]
+        && *existing == tag_lower
+    {
+        let next_num = v.segments.get(pos + 1).and_then(|s| match s {
+            Seg::Num(n) => Some(*n),
+            Seg::Text(_) => None,
+        });
+        let n = next_num.map_or(0, |n| n + 1);
+        return format!("{major}.{minor}.{patch}-{tag_lower}.{n}");
+    }
+    format!("{major}.{minor}.{patch}-{tag_lower}.0")
+}
+
+/// Return the release form of a version, stripping any prerelease/postrelease
+/// tags and build metadata. `1.2.3-alpha.1+build` → `1.2.3`.
+#[pyfunction]
+fn next_stable(version: &str) -> String {
+    let v = parse(version);
+    let (major, minor, patch) = release_triple(&v);
+    format!("{major}.{minor}.{patch}")
+}
+
 #[pymodule]
-fn anyver(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _anyver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVersion>()?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
     m.add_function(wrap_pyfunction!(compare, m)?)?;
@@ -679,5 +911,7 @@ fn anyver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bump_major, m)?)?;
     m.add_function(wrap_pyfunction!(bump_minor, m)?)?;
     m.add_function(wrap_pyfunction!(bump_patch, m)?)?;
+    m.add_function(wrap_pyfunction!(bump_prerelease, m)?)?;
+    m.add_function(wrap_pyfunction!(next_stable, m)?)?;
     Ok(())
 }
