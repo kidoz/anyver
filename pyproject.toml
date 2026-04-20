@@ -33,10 +33,13 @@ features = ["pyo3/extension-module"]
 include = [{ path = "python/anyver/py.typed", format = "wheel" }]
 
 [tool.pytest.ini_options]
-# Unit tests are collected from tests/ but benchmarks are opt-in:
-# pass --benchmark-only (or run pytest tests/benchmarks) to execute them.
+# Unit tests are collected from tests/ but benchmarks are opt-in.
+# They are excluded by default so the unit-test CI doesn't need
+# pytest-benchmark; install with `pip install -e .[bench]` and run
+# `pytest tests/benchmarks --benchmark-only` to execute them (the
+# explicit path overrides the default --ignore).
 testpaths = ["tests"]
-addopts = "--benchmark-disable"
+addopts = "--ignore=tests/benchmarks"
 
 [tool.ruff]
 line-length = 100
