@@ -6,10 +6,26 @@ rust-version = "1.93"
 
 [lib]
 name = "anyver"
-crate-type = ["cdylib"]
+# rlib is needed so `benches/*.rs` (and any future pure-Rust consumers)
+# can link against this crate. maturin continues to build cdylib only.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pyo3 = "0.28"
+
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+
+[features]
+# Exposes internal parser/comparator APIs via `anyver::__bench` so Criterion
+# benches can call them without affecting the public surface.
+bench = []
+
+[[bench]]
+name = "bench_versions"
+path = "benchmarks/bench_versions.rs"
+harness = false
+required-features = ["bench"]
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
