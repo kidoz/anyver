@@ -280,6 +280,45 @@ Built in Rust for speed. Typical benchmarks (Apple M-series):
 | vs Python `packaging.version` | **~14x faster** |
 | vs Python `semver` | **~23x faster** |
 
+## Stability & Versioning
+
+`anyver` follows [Semantic Versioning](https://semver.org/). The public API
+surface covered by SemVer guarantees:
+
+**Stable** (breaking changes require a major version bump):
+
+- The `Version` class constructor, operators, properties, and methods
+  (`raw`, `ecosystem`, `epoch`, `build`, `major/minor/patch`, `is_prerelease`,
+  `is_postrelease`, `is_stable`, `count`, `segments()`, `release()`,
+  `compare()`, `to_dict()`, `from_dict()`, `sort_key()`, `parse()`, `try_parse()`).
+- Module-level functions: `version`, `compare`, `compare_semver_strict`,
+  `sort_versions`, `batch_compare`, `gt`/`ge`/`gte`/`lt`/`le`/`lte`/`eq`/`ne`,
+  `max_version`, `min_version`, `stable_versions`, `latest_stable`,
+  `satisfies`, `bump_major`/`bump_minor`/`bump_patch`/`bump_prerelease`,
+  `next_stable`.
+- The set of accepted ecosystem names (aliases may grow, but existing names
+  keep their meaning).
+- The comparison result (`-1`/`0`/`1`) for any pair of versions within a
+  given ecosystem, within a major version.
+- Type stubs (`.pyi`) and the `py.typed` marker.
+- Pickle format and `__reduce__` output (stable across patch versions).
+
+**Experimental** (may change within minor versions until documented stable):
+
+- `Version.sort_key()` tuple shape (the encoding scheme can evolve if new
+  ecosystems require additional distinguishing fields).
+- The `ecosystem="auto"` detection heuristic. The *rules* may be refined to
+  reduce false positives; the *existing correct* detections will not flip.
+- Error messages and exception attribute text.
+
+**Not covered by SemVer:**
+
+- Rust internals (`src/`), benchmarks, CI configuration.
+- Performance numbers (we aim to improve them monotonically, but there are
+  no guarantees tied to the public version).
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Author
 
 Aleksandr Pavlov <ckidoz@gmail.com>

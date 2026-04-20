@@ -20,3 +20,43 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 dynamic = ["version"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+bench = ["pytest>=8", "pytest-benchmark>=5"]
+lint = ["ruff>=0.8"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "anyver._anyver"
+features = ["pyo3/extension-module"]
+include = [{ path = "python/anyver/py.typed", format = "wheel" }]
+
+[tool.pytest.ini_options]
+# Unit tests are collected from tests/ but benchmarks are opt-in:
+# pass --benchmark-only (or run pytest tests/benchmarks) to execute them.
+testpaths = ["tests"]
+addopts = "--benchmark-disable"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["target", ".venv"]
+
+[tool.ruff.lint]
+# Start conservative: pyflakes, pycodestyle errors, isort, pyupgrade,
+# bugbear, comprehensions. Formatting is handled by `ruff format`.
+select = ["E", "F", "I", "UP", "B", "C4", "W"]
+ignore = [
+    "E501",  # long lines — `ruff format` already handles them
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["anyver"]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
