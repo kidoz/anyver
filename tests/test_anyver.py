@@ -1230,3 +1230,71 @@ class TestModuleSurface:
 
         pkg_dir = os.path.dirname(pkg.__file__)
         assert os.path.exists(os.path.join(pkg_dir, "py.typed"))
+
+
+# ============================================================================
+# PEP 440 local-version ordering (public/public > public/no-local) — the
+# generic parser used to drop `+LOCAL` entirely.
+# ============================================================================
+
+
+class TestPep440LocalVersion:
+    def test_local_sorts_after_release(self):
+        assert anyver.compare("1.0+abc", "1.0", ecosystem="pep440") == 1
+        assert anyver.compare("1.0", "1.0+abc", ecosystem="pep440") == -1
+
+    def test_local_equal_to_self(self):
+        assert anyver.compare("1.0+abc", "1.0+abc", ecosystem="pep440") == 0
+
+    def test_local_lex_ordering(self):
+        assert anyver.compare("1.0+abc", "1.0+abd", ecosystem="pep440") == -1
+        assert anyver.compare("1.0+abd", "1.0+abc", ecosystem="pep440") == 1
+
+    def test_local_longer_wins_when_prefix_matches(self):
+        assert anyver.compare("1.0+a.1", "1.0+a", ecosystem="pep440") == 1
+
+    def test_local_numeric_beats_alpha(self):
+        # Per PEP 440: numeric segments sort greater than alpha.
+        assert anyver.compare("1.0+1", "1.0+a", ecosystem="pep440") == 1
+
+    def test_local_separator_normalization(self):
+        # PEP 440 treats `.`, `-`, `_` as equivalent separators in local versions.
+        assert anyver.compare("1.0+a.b", "1.0+a-b", ecosystem="pep440") == 0
+        assert anyver.compare("1.0+a.b", "1.0+a_b", ecosystem="pep440") == 0
+
+    def test_public_ordering_still_wins(self):
+        # Public part takes precedence over local.
+        assert anyver.compare("1.0+zzz", "2.0", ecosystem="pep440") == -1
+        assert anyver.compare("2.0", "1.0+zzz", ecosystem="pep440") == 1
+
+
+# ============================================================================
+# Maven release-alias qualifiers (`final`, `ga`, `release`) compare equal
+# to the bare release — the generic parser used to treat them as unknown text
+# and sort `1.0-final` below `1.0`.
+# ============================================================================
+
+
+class TestMavenReleaseAliases:
+    @pytest.mark.parametrize("alias", ["final", "ga", "release"])
+    def test_alias_equal_to_release(self, alias):
+        assert anyver.compare(f"1.0-{alias}", "1.0", ecosystem="maven") == 0
+        assert anyver.compare(f"1.0-{alias}", "1.0.0", ecosystem="maven") == 0
+
+    def test_alias_below_sp(self):
+        # Maven qualifier ordering: release < sp.
+        assert anyver.compare("1.0-final", "1.0-sp-1", ecosystem="maven") == -1
+
+    def test_alias_above_snapshot(self):
+        assert anyver.compare("1.0-SNAPSHOT", "1.0-final", ecosystem="maven") == -1
+        assert anyver.compare("1.0-SNAPSHOT", "1.0-ga", ecosystem="maven") == -1
+
+    def test_alias_in_hash(self):
+        # Hash contract: equal versions must hash equal.
+        assert hash(Version("1.0-final", ecosystem="maven")) == hash(
+            Version("1.0", ecosystem="maven")
+        )
+
+    def test_alias_works_in_generic_mode_too(self):
+        # Also covered by the generic comparator since normalized() is shared.
+        assert anyver.compare("1.0-final", "1.0") == 0

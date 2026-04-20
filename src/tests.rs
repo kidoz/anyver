@@ -2852,3 +2852,83 @@ fn test_parse_constraint_error_message() {
     let err = parse_constraint("1.0.0").unwrap_err();
     assert!(err.contains("invalid constraint"));
 }
+
+// ====================================================================
+// PEP 440 LOCAL VERSION ORDERING
+// ====================================================================
+
+fn pep440_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let pa = parse_for_ecosystem(Ecosystem::Pep440, a).unwrap();
+    let pb = parse_for_ecosystem(Ecosystem::Pep440, b).unwrap();
+    compare_for_ecosystem(Ecosystem::Pep440, &pa, &pb)
+}
+
+#[test]
+fn test_pep440_local_greater_than_release() {
+    assert_eq!(pep440_cmp("1.0+abc", "1.0"), std::cmp::Ordering::Greater);
+}
+#[test]
+fn test_pep440_local_equal_self() {
+    assert_eq!(pep440_cmp("1.0+abc", "1.0+abc"), std::cmp::Ordering::Equal);
+}
+#[test]
+fn test_pep440_local_lex() {
+    assert_eq!(pep440_cmp("1.0+abc", "1.0+abd"), std::cmp::Ordering::Less);
+}
+#[test]
+fn test_pep440_local_numeric_gt_alpha() {
+    assert_eq!(pep440_cmp("1.0+1", "1.0+a"), std::cmp::Ordering::Greater);
+}
+#[test]
+fn test_pep440_local_separator_equivalence() {
+    assert_eq!(pep440_cmp("1.0+a.b", "1.0+a-b"), std::cmp::Ordering::Equal);
+    assert_eq!(pep440_cmp("1.0+a.b", "1.0+a_b"), std::cmp::Ordering::Equal);
+}
+#[test]
+fn test_pep440_public_part_wins_over_local() {
+    assert_eq!(pep440_cmp("1.0+zzz", "2.0"), std::cmp::Ordering::Less);
+}
+
+// ====================================================================
+// MAVEN RELEASE-ALIAS QUALIFIERS
+// ====================================================================
+
+#[test]
+fn test_tag_weight_release_aliases() {
+    assert_eq!(tag_weight("final"), Some(30));
+    assert_eq!(tag_weight("ga"), Some(30));
+    assert_eq!(tag_weight("release"), Some(30));
+}
+
+#[test]
+fn test_normalized_strips_trailing_release_alias() {
+    let segs = vec![Seg::Num(1), Seg::Num(0), Seg::Text("final".to_string())];
+    assert_eq!(normalized(&segs), &[Seg::Num(1)]);
+}
+
+fn gen_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let pa = parse_for_ecosystem(Ecosystem::Generic, a).unwrap();
+    let pb = parse_for_ecosystem(Ecosystem::Generic, b).unwrap();
+    compare_for_ecosystem(Ecosystem::Generic, &pa, &pb)
+}
+
+#[test]
+fn test_generic_final_equals_release() {
+    assert_eq!(gen_cmp("1.0-final", "1.0"), std::cmp::Ordering::Equal);
+}
+#[test]
+fn test_generic_ga_equals_release() {
+    assert_eq!(gen_cmp("1.0-ga", "1.0"), std::cmp::Ordering::Equal);
+}
+#[test]
+fn test_maven_final_below_sp() {
+    let pa = parse_for_ecosystem(Ecosystem::Maven, "1.0-final").unwrap();
+    let pb = parse_for_ecosystem(Ecosystem::Maven, "1.0-sp-1").unwrap();
+    assert_eq!(compare_for_ecosystem(Ecosystem::Maven, &pa, &pb), std::cmp::Ordering::Less);
+}
+#[test]
+fn test_maven_snapshot_below_final() {
+    let pa = parse_for_ecosystem(Ecosystem::Maven, "1.0-SNAPSHOT").unwrap();
+    let pb = parse_for_ecosystem(Ecosystem::Maven, "1.0-final").unwrap();
+    assert_eq!(compare_for_ecosystem(Ecosystem::Maven, &pa, &pb), std::cmp::Ordering::Less);
+}

@@ -2,12 +2,15 @@ use crate::parser::{Ecosystem, ParsedVersion, Seg, parse_generic, strip_v, tag_w
 use std::cmp::Ordering;
 
 pub(crate) fn normalized(segs: &[Seg]) -> &[Seg] {
+    // Strip trailing transparent tokens: Num(0) and release-alias tags
+    // (weight 30). This keeps trailing-zero equivalence (`1.0 == 1.0.0`)
+    // and treats Maven-style `1.0-final` / `1.0-ga` as equal to `1.0`.
     let mut end = segs.len();
     while end > 0 {
-        if let Seg::Num(0) = segs[end - 1] {
-            end -= 1;
-        } else {
-            break;
+        match &segs[end - 1] {
+            Seg::Num(0) => end -= 1,
+            Seg::Text(t) if tag_weight(t) == Some(30) => end -= 1,
+            _ => break,
         }
     }
     &segs[..end]
@@ -90,6 +93,7 @@ pub(crate) enum ParsedRepr {
     Semver(SemVer),
     Debian(DebianVersion),
     Rpm(RpmVersion),
+    Pep440(Pep440Version),
 }
 
 pub(crate) trait VersionStrategy {
@@ -193,8 +197,22 @@ impl_semver_strategy!(CratesStrategy);
 impl_semver_strategy!(HexStrategy);
 impl_semver_strategy!(SwiftStrategy);
 
+// PEP 440 preserves and compares the local-version label (`+LOCAL`) so that
+// `1.0+abc` sorts strictly greater than `1.0` per PEP 440 §"Local version
+// identifiers". The generic strategy silently drops that suffix.
+impl VersionStrategy for Pep440Strategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        parse_pep440(input).map(ParsedRepr::Pep440)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Pep440(a), ParsedRepr::Pep440(b)) => cmp_pep440(a, b),
+            _ => unreachable!(),
+        }
+    }
+}
+
 // Validate→generic ecosystems
-impl_generic_strategy!(Pep440Strategy, validate_pep440);
 impl_generic_strategy!(RubyStrategy, validate_ruby);
 impl_generic_strategy!(MavenStrategy, validate_maven);
 impl_generic_strategy!(NugetStrategy, validate_nuget);
@@ -273,6 +291,75 @@ pub(crate) struct RpmVersion {
     epoch: u64,
     version: String,
     release: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Pep440Version {
+    public: ParsedVersion,
+    /// Parsed local-version segments (PEP 440 `+LOCAL`). `None` when the
+    /// version has no local label; this is strictly less than any `Some(_)`.
+    local: Option<Vec<Seg>>,
+}
+
+/// Tokenize a PEP 440 local version label: digits → `Seg::Num`, letters →
+/// lowercased `Seg::Text`, with `.`, `-`, `_` as separators per the spec.
+fn tokenize_local(s: &str) -> Vec<Seg> {
+    let lower = s.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let len = bytes.len();
+    let mut out: Vec<Seg> = Vec::new();
+    let mut i = 0;
+    while i < len {
+        let ch = bytes[i];
+        if ch == b'.' || ch == b'-' || ch == b'_' {
+            i += 1;
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            let start = i;
+            while i < len && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let n: u64 = lower[start..i].parse().unwrap_or(u64::MAX);
+            out.push(Seg::Num(n));
+            continue;
+        }
+        if ch.is_ascii_alphabetic() {
+            let start = i;
+            while i < len && bytes[i].is_ascii_alphabetic() {
+                i += 1;
+            }
+            out.push(Seg::Text(lower[start..i].to_string()));
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+pub(crate) fn parse_pep440(input: &str) -> Result<Pep440Version, String> {
+    validate_pep440(input)?;
+    let public = parse_generic(input);
+    let trimmed = strip_v(input.trim());
+    let after_epoch = match trimmed.find('!') {
+        Some(pos) if trimmed[..pos].bytes().all(|b| b.is_ascii_digit()) => &trimmed[pos + 1..],
+        _ => trimmed,
+    };
+    let local = after_epoch.find('+').map(|pos| tokenize_local(&after_epoch[pos + 1..]));
+    Ok(Pep440Version { public, local })
+}
+
+pub(crate) fn cmp_pep440(a: &Pep440Version, b: &Pep440Version) -> Ordering {
+    let ord = cmp_parsed(&a.public, &b.public);
+    if ord != Ordering::Equal {
+        return ord;
+    }
+    match (&a.local, &b.local) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(la), Some(lb)) => cmp_segments(la, lb),
+    }
 }
 
 pub(crate) fn parse_strict_u64(s: &str, label: &str) -> Result<u64, String> {

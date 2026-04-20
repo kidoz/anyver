@@ -13,6 +13,10 @@ pub(crate) fn tag_weight(s: &str) -> Option<i32> {
         "milestone" | "m" => Some(15),
         "rc" | "cr" | "c" | "preview" | "pre" => Some(20),
         "snapshot" => Some(25),
+        // Release-aliases: Maven `final`/`ga`/`release` and PEP 440 `r`/`rev`
+        // mean "the release itself" — weight exactly 30 so they compare equal
+        // to no qualifier. `normalized()` strips them trailing-wise.
+        "final" | "ga" | "release" => Some(30),
         "^" => Some(32),
         "post" | "sp" | "patch" | "p" => Some(35),
         _ => None,
