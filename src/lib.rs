@@ -1,3 +1,12 @@
+//! `anyver` — cross-ecosystem version parsing and comparison.
+//!
+//! **This crate is a Python extension built with `PyO3`, not a public Rust
+//! library.** Items under `parser`, `strategies`, and `python` are
+//! `pub(crate)` and the rlib exists only so the in-repo Criterion benches
+//! can link against the internal `__bench` facade (feature-gated).
+//! If you want to use anyver from Rust, open an issue describing your
+//! use case so a stable public surface can be designed deliberately.
+
 pub mod parser;
 pub mod python;
 pub mod strategies;

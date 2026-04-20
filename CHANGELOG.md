@@ -29,6 +29,19 @@
   re-exports the public API. Existing imports (`from anyver import Version`)
   continue to work unchanged.
 - `Version.to_dict()` now includes the `"ecosystem"` key.
+- The PyO3 extension is now built against the `abi3-py311` stable ABI, so a
+  single wheel per platform covers every supported Python version (3.11+).
+
+### Fixed
+- PEP 440 local versions now compare correctly: `1.0+abc > 1.0` and
+  `1.0+a < 1.0+b` per the PEP 440 spec. Previously the comparator routed
+  PEP 440 through the generic strategy, which silently dropped the
+  `+LOCAL` suffix and reported `1.0+abc == 1.0`.
+- Maven release-alias qualifiers `final`, `ga`, and `release` now compare
+  equal to the bare release (so `1.0-final == 1.0 < 1.0-sp-1`). These were
+  previously treated as unknown pre-release text and sorted below the
+  release. The alias set is also honored by the generic strategy, so
+  `Version("1.0-final") == Version("1.0")` holds everywhere.
 
 ## [0.2.0] - 2026-04
 

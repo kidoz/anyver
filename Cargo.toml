@@ -6,12 +6,16 @@ rust-version = "1.93"
 
 [lib]
 name = "anyver"
-# rlib is needed so `benches/*.rs` (and any future pure-Rust consumers)
-# can link against this crate. maturin continues to build cdylib only.
+# cdylib is the shipped Python extension; rlib exists **only** so the
+# Criterion benches under `benchmarks/` can link against this crate via the
+# `bench`-gated `__bench` facade. The Rust API surface is intentionally
+# `pub(crate)`; consume this project through its Python bindings.
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = "0.28"
+# `abi3-py311` = one wheel per platform covers CPython 3.11, 3.12, 3.13, 3.14+
+# via the stable ABI, eliminating per-interpreter build matrix drift.
+pyo3 = { version = "0.28", features = ["abi3-py311"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
