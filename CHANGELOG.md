@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-20
+
+First stable release. The public API described in `README.md` and the
+type stubs in `python/anyver/__init__.pyi` is now covered by SemVer
+guarantees — see the "Stability & Versioning" section of the README for
+the exact surface.
+
 ### Added
 - `Version == str` and all rich comparisons now accept a plain string on the
   right-hand side (`Version("1.0") == "1.0.0"`). Comparing against unrelated
