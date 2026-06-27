@@ -25,6 +25,54 @@ fn richcmp_ord(a: &PyVersion, b: &PyVersion) -> Ordering {
     }
 }
 
+/// A single `(rank, value, text)` element of a `sort_key()` tuple.
+fn key_tuple<'py>(py: Python<'py>, a: i64, b: i64, c: &str) -> PyResult<Bound<'py, PyAny>> {
+    Ok(PyTuple::new(
+        py,
+        vec![
+            a.into_pyobject(py)?.into_any(),
+            b.into_pyobject(py)?.into_any(),
+            c.into_pyobject(py)?.into_any(),
+        ],
+    )?
+    .into_any())
+}
+
+/// Encode a segment list into `sort_key()` tuples isomorphic with
+/// `cmp_segments`: strip trailing `Num(0)` and the transparent zeros just
+/// before the first tag, emit `(2, n, "")` for numbers and `(1, weight, text)`
+/// for tags (numbers outrank tags), then a trailing `(1, 30, "")`
+/// release-boundary sentinel so a bare release sorts above any pre-release tag
+/// and below any post-release tag.
+fn encode_segments<'py>(py: Python<'py>, raw_segs: &[Seg]) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let sat = |n: u64| -> i64 { i64::try_from(n).unwrap_or(i64::MAX) };
+    let segs = normalized(raw_segs);
+    let first_text = segs.iter().position(|s| matches!(s, Seg::Text(_)));
+    let (prefix, suffix) = match first_text {
+        Some(pos) => {
+            let mut end = pos;
+            while end > 0 {
+                if let Seg::Num(0) = segs[end - 1] {
+                    end -= 1;
+                } else {
+                    break;
+                }
+            }
+            (&segs[..end], &segs[pos..])
+        }
+        None => (segs, &[][..]),
+    };
+    let mut out: Vec<Bound<'py, PyAny>> = Vec::with_capacity(prefix.len() + suffix.len() + 1);
+    for seg in prefix.iter().chain(suffix.iter()) {
+        out.push(match seg {
+            Seg::Num(n) => key_tuple(py, 2, sat(*n), "")?,
+            Seg::Text(s) => key_tuple(py, 1, i64::from(tag_weight(s).unwrap_or(29)), s)?,
+        });
+    }
+    out.push(key_tuple(py, 1, 30, "")?);
+    Ok(out)
+}
+
 #[pyclass(name = "Version", module = "anyver", from_py_object)]
 #[derive(Debug, Clone)]
 pub(crate) struct PyVersion {
@@ -292,60 +340,21 @@ impl PyVersion {
     }
 
     fn sort_key<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        // Build a normalized segment list for sort_key encoding:
-        // 1. Strip trailing Num(0) from the whole list (standard normalization)
-        // 2. Find the first Text segment; strip trailing Num(0) from the
-        //    numeric prefix before it. This ensures that Num(0) segments
-        //    between the release part and the first tag are transparent,
-        //    matching the comparison algorithm's Num(0)-vs-Missing skip.
-        let segs = normalized(&self.inner.segments);
-        let first_text = segs.iter().position(|s| matches!(s, Seg::Text(_)));
-        let (prefix, suffix) = match first_text {
-            Some(pos) => {
-                let mut end = pos;
-                while end > 0 {
-                    if let Seg::Num(0) = segs[end - 1] {
-                        end -= 1;
-                    } else {
-                        break;
-                    }
-                }
-                (&segs[..end], &segs[pos..])
-            }
-            None => (segs, &[][..]),
-        };
-
-        let cap = prefix.len() + suffix.len() + 2;
-        let mut tuples: Vec<Bound<'py, PyAny>> = Vec::with_capacity(cap);
-
-        let mk_tuple = |py: Python<'py>, a: i64, b: i64, c: &str| -> PyResult<Bound<'py, PyAny>> {
-            Ok(PyTuple::new(
-                py,
-                vec![
-                    a.into_pyobject(py).unwrap().into_any(),
-                    b.into_pyobject(py).unwrap().into_any(),
-                    c.into_pyobject(py).unwrap().into_any(),
-                ],
-            )?
-            .into_any())
-        };
-
+        // The key encodes the generic segment ordering exactly (see
+        // `encode_segments`), prefixed by the epoch. For PEP 440 the local
+        // label (`+LOCAL`) is appended after the public encoding so the key
+        // stays isomorphic with `cmp_pep440`: a label-bearing version yields a
+        // strictly longer key (None < Some), and two labels then compare via
+        // the same segment encoding (cmp_segments).
         let sat = |n: u64| -> i64 { i64::try_from(n).unwrap_or(i64::MAX) };
-        tuples.push(mk_tuple(py, 2, sat(self.inner.epoch), "")?);
-
-        for seg in prefix.iter().chain(suffix.iter()) {
-            let t = match seg {
-                Seg::Num(n) => mk_tuple(py, 2, sat(*n), "")?,
-                Seg::Text(s) => {
-                    let w = i64::from(tag_weight(s).unwrap_or(29));
-                    mk_tuple(py, 1, w, s)?
-                }
-            };
-            tuples.push(t);
+        let mut tuples: Vec<Bound<'py, PyAny>> = Vec::new();
+        tuples.push(key_tuple(py, 2, sat(self.inner.epoch), "")?);
+        tuples.extend(encode_segments(py, &self.inner.segments)?);
+        if let ParsedRepr::Pep440(p) = &self.repr
+            && let Some(local) = p.local()
+        {
+            tuples.extend(encode_segments(py, local)?);
         }
-
-        tuples.push(mk_tuple(py, 1, 30, "")?);
-
         PyTuple::new(py, tuples)
     }
 }

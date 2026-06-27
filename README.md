@@ -239,8 +239,16 @@ Version("1.2.3-rc.1+build.42").to_dict()
 ```python
 Version("1.2.3-rc.1").sort_key()
 # Tuple of tuples that preserves comparison order when sorted lexically.
-# Guarantees perfect isomorphism with anyver.compare().
+# Isomorphic with comparing two versions of the same ecosystem, including
+# PEP 440 local labels (e.g. `1.0+abc` sorts above `1.0`).
 ```
+
+> **Scope:** the key reproduces the generic/SemVer and PEP 440 orderings exactly.
+> Debian and RPM compare with their native `dpkg`/`rpm` algorithms, which the key
+> approximates via the generic ordering — the same documented approximation the
+> parser makes for those ecosystems. For Debian/RPM, sort with
+> `anyver.sort_versions(..., ecosystem=...)` rather than by `sort_key()` when
+> exact native ordering matters.
 
 ## Cross-Ecosystem Examples
 

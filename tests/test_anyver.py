@@ -747,6 +747,24 @@ class TestSortKey:
         assert Version("1.0").sort_key() == Version("1.0.0").sort_key()
         assert Version("v1.0.0").sort_key() == Version("1.0.0").sort_key()
 
+    def test_pep440_local_label_key_ordered(self):
+        """A PEP 440 local label sorts strictly above the bare release, and the
+        sort key reflects it (regression: previously both keys were equal)."""
+        base = Version("1.0", ecosystem="pep440")
+        local = Version("1.0+abc", ecosystem="pep440")
+        assert local.compare(base) == 1
+        assert local.sort_key() != base.sort_key()
+        assert local.sort_key() > base.sort_key()
+
+    def test_isomorphism_pep440_local(self):
+        """sort_key stays isomorphic with compare() once local labels matter."""
+        versions = ["1.0", "1.0+abc", "1.0+abd", "1.0+1", "1.0.post1"]
+        keyed = sorted(versions, key=lambda s: Version(s, ecosystem="pep440").sort_key())
+        for i in range(len(keyed) - 1):
+            a = Version(keyed[i], ecosystem="pep440")
+            b = Version(keyed[i + 1], ecosystem="pep440")
+            assert a.compare(b) <= 0, f"{keyed[i]} should be <= {keyed[i + 1]}"
+
 
 # ============================================================================
 # Transitivity

@@ -18,6 +18,15 @@ pub(crate) struct Pep440Version {
     local: Option<Vec<Seg>>,
 }
 
+impl Pep440Version {
+    /// The parsed local-version segments, if the version carries a `+LOCAL`
+    /// label. Used by `Version.sort_key()` so the key stays isomorphic with
+    /// `cmp_pep440`, which orders `None < Some(_)` and then by `cmp_segments`.
+    pub(crate) fn local(&self) -> Option<&[Seg]> {
+        self.local.as_deref()
+    }
+}
+
 /// Tokenize a PEP 440 local version label: digits → `Seg::Num`, letters →
 /// lowercased `Seg::Text`, with `.`, `-`, `_` as separators per the spec.
 fn tokenize_local(s: &str) -> Vec<Seg> {
