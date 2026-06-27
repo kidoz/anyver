@@ -1335,7 +1335,7 @@ class TestCorrectnessHardening:
         versions = ["1.0", "1.0+abc", "1.0+abd", "1.0+abd.1"]
         by_key = sorted(versions, key=lambda v: Version(v, ecosystem="pep440").sort_key())
         assert by_key == versions
-        for left, right in zip(by_key, by_key[1:]):
+        for left, right in zip(by_key, by_key[1:], strict=False):
             assert anyver.compare(left, right, ecosystem="pep440") == -1
 
 
