@@ -20,6 +20,7 @@ mod compare;
 mod constraints;
 mod conv;
 mod pyversion;
+mod security;
 mod stable;
 
 // Reached only by the crate's unit tests (`mod tests`, via `crate::python::*`).
@@ -49,6 +50,14 @@ fn _anyver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(stable::stable_versions, m)?)?;
     m.add_function(wrap_pyfunction!(stable::latest_stable, m)?)?;
     m.add_function(wrap_pyfunction!(constraints::satisfies, m)?)?;
+    m.add_function(wrap_pyfunction!(constraints::range_contains, m)?)?;
+    m.add_function(wrap_pyfunction!(constraints::ranges_intersect, m)?)?;
+    m.add_function(wrap_pyfunction!(security::parse_purl, m)?)?;
+    m.add_function(wrap_pyfunction!(security::build_purl, m)?)?;
+    m.add_function(wrap_pyfunction!(security::purl_ecosystem, m)?)?;
+    m.add_function(wrap_pyfunction!(security::build_vers, m)?)?;
+    m.add_function(wrap_pyfunction!(security::vers_contains, m)?)?;
+    m.add_function(wrap_pyfunction!(security::osv_affected, m)?)?;
     m.add_function(wrap_pyfunction!(bump::bump_major, m)?)?;
     m.add_function(wrap_pyfunction!(bump::bump_minor, m)?)?;
     m.add_function(wrap_pyfunction!(bump::bump_patch, m)?)?;

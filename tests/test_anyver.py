@@ -1339,3 +1339,52 @@ class TestCorrectnessHardening:
             assert anyver.compare(left, right, ecosystem="pep440") == -1
 
 
+class TestRangeCore:
+    def test_range_contains_basic(self):
+        assert anyver.range_contains("1.5.0", ">=1.0.0,<2.0.0")
+        assert not anyver.range_contains("2.0.0", ">=1.0.0,<2.0.0")
+
+    def test_range_contains_shorthand(self):
+        assert anyver.range_contains("1.2.5", "^1.2.3")
+        assert not anyver.range_contains("2.0.0", "^1.2.3")
+        assert anyver.range_contains("1.2.7", "1.2.x")
+
+    def test_ranges_intersect(self):
+        assert anyver.ranges_intersect(">=1.0.0,<2.0.0", ">=1.5.0,<3.0.0")
+        assert not anyver.ranges_intersect(">=1.0.0,<2.0.0", ">=2.0.0,<3.0.0")
+
+    def test_interval_range(self):
+        assert anyver.range_contains("1.5.0", "[1.0.0,2.0.0)")
+        assert not anyver.range_contains("2.0.0", "[1.0.0,2.0.0)")
+
+
+class TestSecurityInterop:
+    def test_purl_parse_and_build(self):
+        purl = "pkg:npm/%40scope/name@1.2.3"
+        parsed = anyver.parse_purl(purl)
+        assert parsed["type"] == "npm"
+        assert parsed["name"] == "name"
+        assert parsed["version"] == "1.2.3"
+        assert parsed["ecosystem"] == "npm"
+        assert anyver.build_purl("npm", "name", "1.2.3", "%40scope") == purl
+
+    def test_vers_contains(self):
+        vers = anyver.build_vers("npm", ">=1.0.0,<2.0.0")
+        assert vers == "vers:npm/>=1.0.0,<2.0.0"
+        assert anyver.vers_contains(vers, "1.5.0")
+        assert not anyver.vers_contains(vers, "2.0.0")
+
+    def test_osv_affected_events(self):
+        affected = {
+            "package": {"ecosystem": "npm", "name": "demo"},
+            "ranges": [
+                {
+                    "type": "SEMVER",
+                    "events": [{"introduced": "1.0.0"}, {"fixed": "1.2.0"}],
+                }
+            ],
+        }
+        assert anyver.osv_affected("1.1.0", affected)
+        assert not anyver.osv_affected("1.2.0", affected)
+
+

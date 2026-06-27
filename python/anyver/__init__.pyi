@@ -119,6 +119,32 @@ def satisfies(version: str, constraint: str, ecosystem: str = "generic") -> bool
     `~1.2`, `1.2.x`, `*`.
     """
 
+def range_contains(version: str, range: str, ecosystem: str = "generic") -> bool:
+    """Return whether `version` is contained by an ecosystem range."""
+
+def ranges_intersect(left: str, right: str, ecosystem: str = "generic") -> bool:
+    """Return whether two ecosystem ranges share at least one version."""
+
+# --- Security interop ---
+def parse_purl(purl: str) -> dict[str, Any]:
+    """Parse a package-url string into structured fields."""
+
+def build_purl(
+    package_type: str,
+    name: str,
+    version: str | None = None,
+    namespace: str | None = None,
+    qualifiers: str | None = None,
+    subpath: str | None = None,
+) -> str: ...
+
+def purl_ecosystem(purl: str) -> str | None: ...
+def build_vers(ecosystem: str, range: str) -> str: ...
+def vers_contains(vers: str, version: str) -> bool: ...
+def osv_affected(
+    version: str, affected: dict[str, Any], ecosystem: str | None = None
+) -> bool: ...
+
 # --- Version bumping ---
 def bump_major(version: str) -> str: ...
 def bump_minor(version: str) -> str: ...

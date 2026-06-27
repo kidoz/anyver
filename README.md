@@ -115,6 +115,15 @@ anyver.satisfies("1.0.0-alpha", ">1.0.0")      # False
 anyver.satisfies("5.14.0-503.19.1.el9_5", ">=5.14.0-427.0.0.el9_4", ecosystem="rpm")
 ```
 
+Range helpers also support OR with `||`, npm/Cargo-style caret and tilde ranges, x-ranges, Maven/NuGet interval notation, and Terraform-style `~>`:
+
+```python
+anyver.range_contains("1.5.0", ">=1.0.0,<2.0.0")    # True
+anyver.range_contains("1.2.7", "1.2.x")              # True
+anyver.range_contains("1.5.0", "[1.0.0,2.0.0)")      # True
+anyver.ranges_intersect(">=1.0,<2.0", ">=1.5,<3.0")  # True
+```
+
 ## Stable Version Filtering
 
 Filter out pre-release versions or find the latest stable:
@@ -249,6 +258,28 @@ Version("1.2.3-rc.1").sort_key()
 > parser makes for those ecosystems. For Debian/RPM, sort with
 > `anyver.sort_versions(..., ecosystem=...)` rather than by `sort_key()` when
 > exact native ordering matters.
+
+## Security Interop
+
+Helpers are provided for package-url (PURL), VERS-style version ranges, and OSV-shaped affected records:
+
+```python
+anyver.parse_purl("pkg:npm/%40scope/name@1.2.3")
+# {"type": "npm", "namespace": "%40scope", "name": "name",
+#  "version": "1.2.3", "ecosystem": "npm", ...}
+
+anyver.build_purl("npm", "name", "1.2.3", "%40scope")
+# "pkg:npm/%40scope/name@1.2.3"
+
+vers = anyver.build_vers("npm", ">=1.0.0,<2.0.0")
+anyver.vers_contains(vers, "1.5.0")  # True
+
+affected = {
+    "package": {"ecosystem": "npm", "name": "demo"},
+    "ranges": [{"events": [{"introduced": "1.0.0"}, {"fixed": "1.2.0"}]}],
+}
+anyver.osv_affected("1.1.0", affected)  # True
+```
 
 ## Cross-Ecosystem Examples
 

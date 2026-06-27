@@ -1,0 +1,411 @@
+//! Ecosystem-aware version range parsing and set operations.
+//!
+//! This module keeps range semantics in pure Rust. The Python layer only
+//! translates arguments and errors.
+
+use crate::parser::Ecosystem;
+use crate::strategies::{compare_for_ecosystem, parse_for_ecosystem};
+use std::cmp::Ordering;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RangeOp {
+    Gt,
+    Ge,
+    Lt,
+    Le,
+    Eq,
+    Ne,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Comparator {
+    pub(crate) op: RangeOp,
+    pub(crate) version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RangeSet {
+    pub(crate) branches: Vec<Vec<Comparator>>,
+}
+
+#[derive(Debug, Clone)]
+struct Interval {
+    lower: Option<(String, bool)>,
+    upper: Option<(String, bool)>,
+    equals: Vec<String>,
+}
+
+fn cmp_versions(ecosystem: Ecosystem, a: &str, b: &str) -> Result<Ordering, String> {
+    let pa = parse_for_ecosystem(ecosystem, a)?;
+    let pb = parse_for_ecosystem(ecosystem, b)?;
+    Ok(compare_for_ecosystem(ecosystem, &pa, &pb))
+}
+
+fn fmt_triple(major: u64, minor: u64, patch: u64) -> String {
+    format!("{major}.{minor}.{patch}")
+}
+
+fn parse_num_prefix(input: &str) -> Option<(Vec<u64>, usize)> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::with_capacity(3);
+    let mut wildcard_at: Option<usize> = None;
+    for (i, raw) in s.split('.').enumerate() {
+        if i >= 3 {
+            break;
+        }
+        if raw == "x" || raw == "X" || raw == "*" {
+            wildcard_at = Some(i);
+            break;
+        }
+        let numeric: String = raw.chars().take_while(char::is_ascii_digit).collect();
+        if numeric.is_empty() {
+            return None;
+        }
+        let n: u64 = numeric.parse().ok()?;
+        parts.push(n);
+    }
+    if parts.is_empty() && wildcard_at != Some(0) {
+        return None;
+    }
+    Some((parts, wildcard_at.unwrap_or(3)))
+}
+
+fn parse_comparator(token: &str) -> Result<Comparator, String> {
+    let t = token.trim();
+    let (op, version) = if let Some(v) = t.strip_prefix(">=") {
+        (RangeOp::Ge, v)
+    } else if let Some(v) = t.strip_prefix("<=") {
+        (RangeOp::Le, v)
+    } else if let Some(v) = t.strip_prefix("!=") {
+        (RangeOp::Ne, v)
+    } else if let Some(v) = t.strip_prefix("==") {
+        (RangeOp::Eq, v)
+    } else if let Some(v) = t.strip_prefix('>') {
+        (RangeOp::Gt, v)
+    } else if let Some(v) = t.strip_prefix('<') {
+        (RangeOp::Lt, v)
+    } else {
+        return Err(format!(
+            "invalid comparator: '{t}'; expected operator (>=, <=, >, <, ==, !=) followed by version"
+        ));
+    };
+    let version = version.trim();
+    if version.is_empty() {
+        return Err(format!("missing version in comparator '{token}'"));
+    }
+    Ok(Comparator { op, version: version.to_string() })
+}
+
+fn expand_caret(rest: &str) -> Result<Vec<Comparator>, String> {
+    let (parts, _) =
+        parse_num_prefix(rest).ok_or_else(|| format!("invalid caret range: '^{rest}'"))?;
+    let major = *parts.first().unwrap_or(&0);
+    let minor = *parts.get(1).unwrap_or(&0);
+    let patch = *parts.get(2).unwrap_or(&0);
+    let upper = if major > 0 {
+        fmt_triple(major + 1, 0, 0)
+    } else if minor > 0 {
+        fmt_triple(0, minor + 1, 0)
+    } else {
+        fmt_triple(0, 0, patch + 1)
+    };
+    Ok(vec![
+        Comparator { op: RangeOp::Ge, version: fmt_triple(major, minor, patch) },
+        Comparator { op: RangeOp::Lt, version: upper },
+    ])
+}
+
+fn expand_tilde(rest: &str) -> Result<Vec<Comparator>, String> {
+    let (parts, _) =
+        parse_num_prefix(rest).ok_or_else(|| format!("invalid tilde range: '~{rest}'"))?;
+    let major = *parts.first().unwrap_or(&0);
+    let minor = *parts.get(1).unwrap_or(&0);
+    let patch = *parts.get(2).unwrap_or(&0);
+    let upper = if parts.len() >= 2 {
+        fmt_triple(major, minor + 1, 0)
+    } else {
+        fmt_triple(major + 1, 0, 0)
+    };
+    Ok(vec![
+        Comparator { op: RangeOp::Ge, version: fmt_triple(major, minor, patch) },
+        Comparator { op: RangeOp::Lt, version: upper },
+    ])
+}
+
+fn expand_x_range(token: &str) -> Result<Vec<Comparator>, String> {
+    let (parts, depth) =
+        parse_num_prefix(token).ok_or_else(|| format!("invalid x-range: '{token}'"))?;
+    let major = *parts.first().unwrap_or(&0);
+    let minor = *parts.get(1).unwrap_or(&0);
+    let lower = fmt_triple(major, minor, 0);
+    let upper =
+        if depth == 1 { fmt_triple(major + 1, 0, 0) } else { fmt_triple(major, minor + 1, 0) };
+    Ok(vec![
+        Comparator { op: RangeOp::Ge, version: lower },
+        Comparator { op: RangeOp::Lt, version: upper },
+    ])
+}
+
+fn expand_interval(token: &str) -> Result<Vec<Comparator>, String> {
+    let t = token.trim();
+    let bytes = t.as_bytes();
+    if bytes.len() < 2 {
+        return Err(format!("invalid interval range: '{token}'"));
+    }
+    let left_inclusive = match bytes[0] {
+        b'[' => true,
+        b'(' => false,
+        _ => return Err(format!("invalid interval range: '{token}'")),
+    };
+    let right_inclusive = match bytes[bytes.len() - 1] {
+        b']' => true,
+        b')' => false,
+        _ => return Err(format!("invalid interval range: '{token}'")),
+    };
+    let body = &t[1..t.len() - 1];
+    let parts: Vec<&str> = body.split(',').collect();
+    if parts.len() != 2 {
+        return Err(format!("invalid interval range: '{token}'"));
+    }
+    let mut out = Vec::with_capacity(2);
+    let lower = parts[0].trim();
+    if !lower.is_empty() {
+        out.push(Comparator {
+            op: if left_inclusive { RangeOp::Ge } else { RangeOp::Gt },
+            version: lower.to_string(),
+        });
+    }
+    let upper = parts[1].trim();
+    if !upper.is_empty() {
+        out.push(Comparator {
+            op: if right_inclusive { RangeOp::Le } else { RangeOp::Lt },
+            version: upper.to_string(),
+        });
+    }
+    Ok(out)
+}
+
+fn expand_token(token: &str) -> Result<Vec<Comparator>, String> {
+    let t = token.trim();
+    if t.is_empty() {
+        return Ok(Vec::new());
+    }
+    if t == "*" || t == "x" || t == "X" {
+        return Ok(Vec::new());
+    }
+    if (t.starts_with('[') || t.starts_with('(')) && (t.ends_with(']') || t.ends_with(')')) {
+        return expand_interval(t);
+    }
+    if let Some(rest) = t.strip_prefix("^") {
+        return expand_caret(rest);
+    }
+    if let Some(rest) = t.strip_prefix("~>") {
+        return expand_tilde(rest);
+    }
+    if let Some(rest) = t.strip_prefix("~=") {
+        return expand_tilde(rest);
+    }
+    if let Some(rest) = t.strip_prefix('~') {
+        return expand_tilde(rest);
+    }
+    if t.contains(".x") || t.contains(".X") || t.contains(".*") {
+        return expand_x_range(t);
+    }
+    Ok(vec![parse_comparator(t)?])
+}
+
+fn split_branch(branch: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut interval_depth = 0usize;
+    for ch in branch.chars() {
+        match ch {
+            '[' | '(' => {
+                interval_depth += 1;
+                buf.push(ch);
+            }
+            ']' | ')' => {
+                interval_depth = interval_depth.saturating_sub(1);
+                buf.push(ch);
+            }
+            ',' if interval_depth == 0 => {
+                if !buf.trim().is_empty() {
+                    out.push(buf.trim().to_string());
+                }
+                buf.clear();
+            }
+            c if c.is_whitespace() && interval_depth == 0 => {
+                if !buf.trim().is_empty() {
+                    out.push(buf.trim().to_string());
+                }
+                buf.clear();
+            }
+            _ => buf.push(ch),
+        }
+    }
+    if !buf.trim().is_empty() {
+        out.push(buf.trim().to_string());
+    }
+
+    let mut merged = Vec::with_capacity(out.len());
+    let mut i = 0usize;
+    while i < out.len() {
+        if matches!(out[i].as_str(), ">=" | "<=" | "!=" | "==" | ">" | "<") && i + 1 < out.len() {
+            merged.push(format!("{}{}", out[i], out[i + 1]));
+            i += 2;
+        } else {
+            merged.push(out[i].clone());
+            i += 1;
+        }
+    }
+    merged
+}
+
+impl RangeSet {
+    pub(crate) fn parse(input: &str) -> Result<Self, String> {
+        let mut branches = Vec::new();
+        for branch in input.split("||") {
+            let mut clauses = Vec::new();
+            for token in split_branch(branch) {
+                clauses.extend(expand_token(&token)?);
+            }
+            branches.push(clauses);
+        }
+        if branches.is_empty() {
+            return Err("empty range".to_string());
+        }
+        Ok(Self { branches })
+    }
+
+    pub(crate) fn contains(&self, ecosystem: Ecosystem, version: &str) -> Result<bool, String> {
+        for branch in &self.branches {
+            let mut ok = true;
+            for clause in branch {
+                let ord = cmp_versions(ecosystem, version, &clause.version)?;
+                let matched = match clause.op {
+                    RangeOp::Gt => ord == Ordering::Greater,
+                    RangeOp::Ge => ord != Ordering::Less,
+                    RangeOp::Lt => ord == Ordering::Less,
+                    RangeOp::Le => ord != Ordering::Greater,
+                    RangeOp::Eq => ord == Ordering::Equal,
+                    RangeOp::Ne => ord != Ordering::Equal,
+                };
+                if !matched {
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn intersects(&self, ecosystem: Ecosystem, other: &Self) -> Result<bool, String> {
+        for left in &self.branches {
+            for right in &other.branches {
+                if branches_intersect(ecosystem, left, right)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+}
+
+fn interval_for(branch: &[Comparator]) -> Interval {
+    let mut interval = Interval { lower: None, upper: None, equals: Vec::new() };
+    for clause in branch {
+        match clause.op {
+            RangeOp::Gt => interval.lower = Some((clause.version.clone(), false)),
+            RangeOp::Ge => interval.lower = Some((clause.version.clone(), true)),
+            RangeOp::Lt => interval.upper = Some((clause.version.clone(), false)),
+            RangeOp::Le => interval.upper = Some((clause.version.clone(), true)),
+            RangeOp::Eq => interval.equals.push(clause.version.clone()),
+            RangeOp::Ne => {}
+        }
+    }
+    interval
+}
+
+fn version_in_branch(
+    ecosystem: Ecosystem,
+    branch: &[Comparator],
+    version: &str,
+) -> Result<bool, String> {
+    RangeSet { branches: vec![branch.to_vec()] }.contains(ecosystem, version)
+}
+
+fn branches_intersect(
+    ecosystem: Ecosystem,
+    left: &[Comparator],
+    right: &[Comparator],
+) -> Result<bool, String> {
+    let li = interval_for(left);
+    let ri = interval_for(right);
+    for eq in &li.equals {
+        if version_in_branch(ecosystem, right, eq)? && version_in_branch(ecosystem, left, eq)? {
+            return Ok(true);
+        }
+    }
+    for eq in &ri.equals {
+        if version_in_branch(ecosystem, left, eq)? && version_in_branch(ecosystem, right, eq)? {
+            return Ok(true);
+        }
+    }
+    if !li.equals.is_empty() || !ri.equals.is_empty() {
+        return Ok(false);
+    }
+
+    let lower = strongest_lower(ecosystem, li.lower, ri.lower)?;
+    let upper = weakest_upper(ecosystem, li.upper, ri.upper)?;
+    match (&lower, &upper) {
+        (Some((lv, li_inc)), Some((uv, ui_inc))) => {
+            let ord = cmp_versions(ecosystem, lv, uv)?;
+            Ok(ord == Ordering::Less || (ord == Ordering::Equal && *li_inc && *ui_inc))
+        }
+        _ => Ok(true),
+    }
+}
+
+fn strongest_lower(
+    ecosystem: Ecosystem,
+    a: Option<(String, bool)>,
+    b: Option<(String, bool)>,
+) -> Result<Option<(String, bool)>, String> {
+    match (a, b) {
+        (None, None) => Ok(None),
+        (Some(x), None) | (None, Some(x)) => Ok(Some(x)),
+        (Some(x), Some(y)) => {
+            let ord = cmp_versions(ecosystem, &x.0, &y.0)?;
+            Ok(Some(match ord {
+                Ordering::Less => y,
+                Ordering::Greater => x,
+                Ordering::Equal => (x.0, x.1 && y.1),
+            }))
+        }
+    }
+}
+
+fn weakest_upper(
+    ecosystem: Ecosystem,
+    a: Option<(String, bool)>,
+    b: Option<(String, bool)>,
+) -> Result<Option<(String, bool)>, String> {
+    match (a, b) {
+        (None, None) => Ok(None),
+        (Some(x), None) | (None, Some(x)) => Ok(Some(x)),
+        (Some(x), Some(y)) => {
+            let ord = cmp_versions(ecosystem, &x.0, &y.0)?;
+            Ok(Some(match ord {
+                Ordering::Less => x,
+                Ordering::Greater => y,
+                Ordering::Equal => (x.0, x.1 && y.1),
+            }))
+        }
+    }
+}
