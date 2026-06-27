@@ -55,6 +55,19 @@ pub(crate) enum Ecosystem {
     Calver,
     Alpine,
     Docker,
+    Conda,
+    Arch,
+    Gentoo,
+    Cran,
+    Spack,
+    Dart,
+    Julia,
+    Terraform,
+    Helm,
+    Cpan,
+    Nix,
+    Homebrew,
+    Freebsd,
 }
 
 impl Ecosystem {
@@ -77,8 +90,21 @@ impl Ecosystem {
             "calver" => Ok(Self::Calver),
             "alpine" | "apk" => Ok(Self::Alpine),
             "docker" | "oci" => Ok(Self::Docker),
+            "conda" | "mamba" => Ok(Self::Conda),
+            "arch" | "pacman" | "archlinux" => Ok(Self::Arch),
+            "gentoo" | "portage" => Ok(Self::Gentoo),
+            "cran" | "r" | "r-cran" => Ok(Self::Cran),
+            "spack" => Ok(Self::Spack),
+            "dart" | "pub" | "flutter" => Ok(Self::Dart),
+            "julia" | "pkg" => Ok(Self::Julia),
+            "terraform" | "opentofu" => Ok(Self::Terraform),
+            "helm" | "chart" | "charts" => Ok(Self::Helm),
+            "cpan" | "perl" => Ok(Self::Cpan),
+            "nix" | "nixpkgs" => Ok(Self::Nix),
+            "homebrew" | "brew" => Ok(Self::Homebrew),
+            "freebsd" | "freebsd-pkg" => Ok(Self::Freebsd),
             other => Err(format!(
-                "unsupported ecosystem '{other}'; expected one of: generic, semver, pep440, debian, rpm, ruby, maven, go, npm, nuget, composer, crates, hex, swift, calver, alpine, docker"
+                "unsupported ecosystem '{other}'; expected one of: generic, semver, pep440, debian, rpm, ruby, maven, go, npm, nuget, composer, crates, hex, swift, calver, alpine, docker, conda, arch, gentoo, cran, spack, dart, julia, terraform, helm, cpan, nix, homebrew, freebsd"
             )),
         }
     }
@@ -102,6 +128,19 @@ impl Ecosystem {
             Self::Calver => "calver",
             Self::Alpine => "alpine",
             Self::Docker => "docker",
+            Self::Conda => "conda",
+            Self::Arch => "arch",
+            Self::Gentoo => "gentoo",
+            Self::Cran => "cran",
+            Self::Spack => "spack",
+            Self::Dart => "dart",
+            Self::Julia => "julia",
+            Self::Terraform => "terraform",
+            Self::Helm => "helm",
+            Self::Cpan => "cpan",
+            Self::Nix => "nix",
+            Self::Homebrew => "homebrew",
+            Self::Freebsd => "freebsd",
         }
     }
 }
@@ -129,6 +168,12 @@ pub(crate) fn autodetect_ecosystem(version: &str) -> Ecosystem {
     }
     if lower.ends_with("-snapshot") {
         return Ecosystem::Maven;
+    }
+    if lower.contains(".post")
+        || lower.contains(".dev")
+        || lower.contains("py") && lower.contains('_')
+    {
+        return Ecosystem::Conda;
     }
     if lower.contains("_alpha")
         || lower.contains("_beta")

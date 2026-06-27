@@ -7,7 +7,7 @@
 
 A high-performance Python library (written in Rust via PyO3) for parsing and comparing software version strings across all major package ecosystems.
 
-Handles: **SemVer, PEP 440, npm, Go modules, Debian/dpkg, RPM, Ruby Gems, Maven, NuGet, Composer, Crates.io, Hex, Swift PM, CalVer, Alpine, Docker** — with a single generic parser and ecosystem-specific modes.
+Handles: **SemVer, PEP 440, npm, Go modules, Debian/dpkg, RPM, Ruby Gems, Maven, NuGet, Composer, Crates.io, Hex, Swift PM, CalVer, Alpine, Docker, Conda, Arch/pacman, Gentoo/Portage, R/CRAN, Spack, Dart pub, Julia Pkg, Terraform/OpenTofu, Helm, CPAN, Nix, Homebrew, FreeBSD pkg** — with a single generic parser, ecosystem-specific modes, range helpers, and security-interoperability utilities.
 
 ## Installation
 
@@ -222,8 +222,13 @@ anyver.compare("1!0.1", "2.0", ecosystem="pep440")     # 1
 # semver, npm, pep440, debian, rpm, go, ruby/gem/rubygems,
 # maven/mvn, nuget/dotnet, composer/php/packagist,
 # crates/cargo, hex/elixir/erlang, swift/swiftpm,
-# calver, alpine/apk, docker/oci
+# calver, alpine/apk, docker/oci,
+# conda/mamba, arch/pacman, gentoo/portage, cran/r,
+# spack, dart/pub/flutter, julia, terraform/opentofu, helm,
+# cpan/perl, nix/nixpkgs, homebrew/brew, freebsd/freebsd-pkg
 ```
+
+The mature exact-native comparators are Debian/dpkg, RPM, strict SemVer-family modes, and PEP 440 local-version handling. Newer ecosystem modes start with validation plus generic or SemVer-compatible ordering where their native algorithm is not yet fully specialized.
 
 ## Database Integration
 

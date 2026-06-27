@@ -1388,3 +1388,25 @@ class TestSecurityInterop:
         assert not anyver.osv_affected("1.2.0", affected)
 
 
+class TestNewEcosystems:
+    @pytest.mark.parametrize(
+        "ecosystem,a,b",
+        [
+            ("conda", "1.0", "1.1"),
+            ("arch", "1:1.0", "2:1.0"),
+            ("gentoo", "1.0_alpha", "1.0"),
+            ("cran", "1.0-1", "1.0-2"),
+            ("spack", "1.0", "2.0"),
+            ("terraform", "1.0.0", "1.1.0"),
+            ("cpan", "1.0", "1.1"),
+            ("nix", "1.0", "1.1"),
+            ("homebrew", "1.0", "1.1"),
+            ("freebsd", "1.0", "1.1"),
+        ],
+    )
+    def test_generic_new_ecosystem_modes(self, ecosystem, a, b):
+        assert anyver.compare(a, b, ecosystem=ecosystem) == -1
+
+    @pytest.mark.parametrize("ecosystem", ["dart", "julia", "helm"])
+    def test_semver_new_ecosystem_modes(self, ecosystem):
+        assert anyver.compare("1.0.0", "1.0.1", ecosystem=ecosystem) == -1

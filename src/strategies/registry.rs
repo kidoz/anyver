@@ -12,8 +12,10 @@ use super::pep440::{Pep440Version, cmp_pep440, parse_pep440};
 use super::rpm::{RpmVersion, cmp_rpm, parse_rpm};
 use super::semver::{SemVer, cmp_semver_strict, parse_semver_strict};
 use super::validators::{
-    validate_alpine, validate_calver, validate_composer, validate_docker, validate_go,
-    validate_maven, validate_nuget, validate_ruby,
+    validate_alpine, validate_arch, validate_calver, validate_composer, validate_conda,
+    validate_cpan, validate_cran, validate_docker, validate_freebsd, validate_gentoo, validate_go,
+    validate_homebrew, validate_maven, validate_nix, validate_nuget, validate_ruby, validate_spack,
+    validate_terraform,
 };
 
 #[derive(Debug, Clone)]
@@ -81,6 +83,19 @@ pub(crate) struct CratesStrategy;
 pub(crate) struct HexStrategy;
 pub(crate) struct SwiftStrategy;
 pub(crate) struct DockerStrategy;
+pub(crate) struct CondaStrategy;
+pub(crate) struct ArchStrategy;
+pub(crate) struct GentooStrategy;
+pub(crate) struct CranStrategy;
+pub(crate) struct SpackStrategy;
+pub(crate) struct DartStrategy;
+pub(crate) struct JuliaStrategy;
+pub(crate) struct TerraformStrategy;
+pub(crate) struct HelmStrategy;
+pub(crate) struct CpanStrategy;
+pub(crate) struct NixStrategy;
+pub(crate) struct HomebrewStrategy;
+pub(crate) struct FreebsdStrategy;
 
 // Generic strategy — no validation
 impl VersionStrategy for GenericStrategy {
@@ -124,6 +139,9 @@ impl_semver_strategy!(SemverStrategy);
 impl_semver_strategy!(CratesStrategy);
 impl_semver_strategy!(HexStrategy);
 impl_semver_strategy!(SwiftStrategy);
+impl_semver_strategy!(DartStrategy);
+impl_semver_strategy!(JuliaStrategy);
+impl_semver_strategy!(HelmStrategy);
 
 // Go is strict SemVer but additionally requires the mandatory lowercase `v`
 // prefix that `strip_v` would otherwise tolerate dropping or upper-casing.
@@ -163,6 +181,16 @@ impl_generic_strategy!(ComposerStrategy, validate_composer);
 impl_generic_strategy!(CalverStrategy, validate_calver);
 impl_generic_strategy!(AlpineStrategy, validate_alpine);
 impl_generic_strategy!(DockerStrategy, validate_docker);
+impl_generic_strategy!(CondaStrategy, validate_conda);
+impl_generic_strategy!(ArchStrategy, validate_arch);
+impl_generic_strategy!(GentooStrategy, validate_gentoo);
+impl_generic_strategy!(CranStrategy, validate_cran);
+impl_generic_strategy!(SpackStrategy, validate_spack);
+impl_generic_strategy!(TerraformStrategy, validate_terraform);
+impl_generic_strategy!(CpanStrategy, validate_cpan);
+impl_generic_strategy!(NixStrategy, validate_nix);
+impl_generic_strategy!(HomebrewStrategy, validate_homebrew);
+impl_generic_strategy!(FreebsdStrategy, validate_freebsd);
 
 static GENERIC_STRATEGY: GenericStrategy = GenericStrategy;
 static SEMVER_STRATEGY: SemverStrategy = SemverStrategy;
@@ -180,6 +208,19 @@ static CRATES_STRATEGY: CratesStrategy = CratesStrategy;
 static HEX_STRATEGY: HexStrategy = HexStrategy;
 static SWIFT_STRATEGY: SwiftStrategy = SwiftStrategy;
 static DOCKER_STRATEGY: DockerStrategy = DockerStrategy;
+static CONDA_STRATEGY: CondaStrategy = CondaStrategy;
+static ARCH_STRATEGY: ArchStrategy = ArchStrategy;
+static GENTOO_STRATEGY: GentooStrategy = GentooStrategy;
+static CRAN_STRATEGY: CranStrategy = CranStrategy;
+static SPACK_STRATEGY: SpackStrategy = SpackStrategy;
+static DART_STRATEGY: DartStrategy = DartStrategy;
+static JULIA_STRATEGY: JuliaStrategy = JuliaStrategy;
+static TERRAFORM_STRATEGY: TerraformStrategy = TerraformStrategy;
+static HELM_STRATEGY: HelmStrategy = HelmStrategy;
+static CPAN_STRATEGY: CpanStrategy = CpanStrategy;
+static NIX_STRATEGY: NixStrategy = NixStrategy;
+static HOMEBREW_STRATEGY: HomebrewStrategy = HomebrewStrategy;
+static FREEBSD_STRATEGY: FreebsdStrategy = FreebsdStrategy;
 
 pub(crate) fn strategy_for(ecosystem: Ecosystem) -> &'static dyn VersionStrategy {
     match ecosystem {
@@ -199,6 +240,19 @@ pub(crate) fn strategy_for(ecosystem: Ecosystem) -> &'static dyn VersionStrategy
         Ecosystem::Composer => &COMPOSER_STRATEGY,
         Ecosystem::Calver => &CALVER_STRATEGY,
         Ecosystem::Alpine => &ALPINE_STRATEGY,
+        Ecosystem::Conda => &CONDA_STRATEGY,
+        Ecosystem::Arch => &ARCH_STRATEGY,
+        Ecosystem::Gentoo => &GENTOO_STRATEGY,
+        Ecosystem::Cran => &CRAN_STRATEGY,
+        Ecosystem::Spack => &SPACK_STRATEGY,
+        Ecosystem::Dart => &DART_STRATEGY,
+        Ecosystem::Julia => &JULIA_STRATEGY,
+        Ecosystem::Terraform => &TERRAFORM_STRATEGY,
+        Ecosystem::Helm => &HELM_STRATEGY,
+        Ecosystem::Cpan => &CPAN_STRATEGY,
+        Ecosystem::Nix => &NIX_STRATEGY,
+        Ecosystem::Homebrew => &HOMEBREW_STRATEGY,
+        Ecosystem::Freebsd => &FREEBSD_STRATEGY,
     }
 }
 

@@ -31,6 +31,7 @@ mod constraints;
 mod datasets_native;
 mod datasets_semver_family;
 mod dispatch;
+mod ecosystem_expansion;
 mod maven;
 mod maven_aliases;
 mod parser_semver;
