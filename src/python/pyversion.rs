@@ -73,6 +73,23 @@ fn encode_segments<'py>(py: Python<'py>, raw_segs: &[Seg]) -> PyResult<Vec<Bound
     Ok(out)
 }
 
+fn encode_local_segments<'py>(
+    py: Python<'py>,
+    raw_segs: &[Seg],
+) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let sat = |n: u64| -> i64 { i64::try_from(n).unwrap_or(i64::MAX) };
+    let segs = normalized(raw_segs);
+    let mut out: Vec<Bound<'py, PyAny>> = Vec::with_capacity(segs.len() + 1);
+    for seg in segs {
+        out.push(match seg {
+            Seg::Num(n) => key_tuple(py, 2, sat(*n), "")?,
+            Seg::Text(s) => key_tuple(py, 1, 29, s)?,
+        });
+    }
+    out.push(key_tuple(py, 1, 30, "")?);
+    Ok(out)
+}
+
 #[pyclass(name = "Version", module = "anyver", from_py_object)]
 #[derive(Debug, Clone)]
 pub(crate) struct PyVersion {
@@ -353,7 +370,7 @@ impl PyVersion {
         if let ParsedRepr::Pep440(p) = &self.repr
             && let Some(local) = p.local()
         {
-            tuples.extend(encode_segments(py, local)?);
+            tuples.extend(encode_local_segments(py, local)?);
         }
         PyTuple::new(py, tuples)
     }

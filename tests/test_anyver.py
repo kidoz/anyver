@@ -1316,3 +1316,26 @@ class TestMavenReleaseAliases:
     def test_alias_works_in_generic_mode_too(self):
         # Also covered by the generic comparator since normalized() is shared.
         assert anyver.compare("1.0-final", "1.0") == 0
+
+
+# ============================================================================
+# Correctness hardening, ranges, security interop, and new ecosystems
+# ============================================================================
+
+
+class TestCorrectnessHardening:
+    def test_go_requires_lowercase_v(self):
+        with pytest.raises(ValueError):
+            anyver.compare("1.0.0", "1.0.1", ecosystem="go")
+        with pytest.raises(ValueError):
+            anyver.compare("V1.0.0", "V1.0.1", ecosystem="go")
+        assert anyver.compare("v1.0.0", "v1.0.1", ecosystem="go") == -1
+
+    def test_pep440_local_sort_key_isomorphic(self):
+        versions = ["1.0", "1.0+abc", "1.0+abd", "1.0+abd.1"]
+        by_key = sorted(versions, key=lambda v: Version(v, ecosystem="pep440").sort_key())
+        assert by_key == versions
+        for left, right in zip(by_key, by_key[1:]):
+            assert anyver.compare(left, right, ecosystem="pep440") == -1
+
+
