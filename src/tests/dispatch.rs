@@ -186,6 +186,32 @@ fn test_go_eco_invalid() {
     assert!(compare_str_with_ecosystem("v1.0", "v2.0", "go").is_err());
 }
 
+#[test]
+fn test_go_eco_requires_v_prefix() {
+    // Spec: Go modules always carry a mandatory lowercase `v` prefix.
+    assert!(compare_str_with_ecosystem("1.0.0", "1.0.1", "go").is_err());
+}
+
+#[test]
+fn test_go_eco_rejects_uppercase_v() {
+    assert!(compare_str_with_ecosystem("V1.0.0", "V1.0.1", "go").is_err());
+}
+
+#[test]
+fn test_go_eco_accepts_incompatible_and_pseudo() {
+    // The `v` requirement must not reject legitimate Go forms.
+    assert_eq!(compare_str_with_ecosystem("v2.0.0+incompatible", "v2.0.0", "go").unwrap(), Equal);
+    assert_eq!(
+        compare_str_with_ecosystem(
+            "v0.0.0-20170915032832-14c0d48ead0c",
+            "v0.0.0-20180915032832-14c0d48ead0c",
+            "go"
+        )
+        .unwrap(),
+        Less
+    );
+}
+
 // --- dpkg verrevcmp unit tests ---
 
 #[test]

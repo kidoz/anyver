@@ -12,8 +12,8 @@ use super::pep440::{Pep440Version, cmp_pep440, parse_pep440};
 use super::rpm::{RpmVersion, cmp_rpm, parse_rpm};
 use super::semver::{SemVer, cmp_semver_strict, parse_semver_strict};
 use super::validators::{
-    validate_alpine, validate_calver, validate_composer, validate_docker, validate_maven,
-    validate_nuget, validate_ruby,
+    validate_alpine, validate_calver, validate_composer, validate_docker, validate_go,
+    validate_maven, validate_nuget, validate_ruby,
 };
 
 #[derive(Debug, Clone)]
@@ -121,10 +121,24 @@ impl VersionStrategy for RpmStrategy {
 
 // SemVer-based ecosystems (validation included in parse_semver_strict)
 impl_semver_strategy!(SemverStrategy);
-impl_semver_strategy!(GoStrategy);
 impl_semver_strategy!(CratesStrategy);
 impl_semver_strategy!(HexStrategy);
 impl_semver_strategy!(SwiftStrategy);
+
+// Go is strict SemVer but additionally requires the mandatory lowercase `v`
+// prefix that `strip_v` would otherwise tolerate dropping or upper-casing.
+impl VersionStrategy for GoStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        validate_go(input)?;
+        parse_semver_strict(input).map(ParsedRepr::Semver)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Semver(a), ParsedRepr::Semver(b)) => cmp_semver_strict(a, b),
+            _ => unreachable!(),
+        }
+    }
+}
 
 // PEP 440 preserves and compares the local-version label (`+LOCAL`) so that
 // `1.0+abc` sorts strictly greater than `1.0` per PEP 440 §"Local version
