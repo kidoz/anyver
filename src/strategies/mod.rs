@@ -8,6 +8,7 @@
 //! - [`pep440`]     — PEP 440 incl. local-version labels
 //! - [`debian`]     — dpkg `verrevcmp` (and the shared epoch splitter)
 //! - [`rpm`]        — RPM `rpmvercmp`
+//! - [`maven`]      — Apache Maven `ComparableVersion`
 //! - [`validators`] — per-ecosystem input preconditions
 //! - [`registry`]   — `VersionStrategy` trait, `ParsedRepr`, ecosystem dispatch
 //!
@@ -19,6 +20,7 @@
 
 mod debian;
 mod generic;
+mod maven;
 mod pep440;
 mod registry;
 mod rpm;
@@ -33,6 +35,8 @@ pub(crate) use registry::*;
 // `crate::strategies::*`) call a handful of the raw comparators directly.
 #[cfg(test)]
 pub(crate) use debian::verrevcmp;
+#[cfg(test)]
+pub(crate) use maven::parse_maven;
 #[cfg(test)]
 pub(crate) use rpm::rpmverscmp;
 #[cfg(test)]

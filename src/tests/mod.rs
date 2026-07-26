@@ -34,6 +34,7 @@ mod dispatch;
 mod ecosystem_expansion;
 mod maven;
 mod maven_aliases;
+mod maven_comparable;
 mod parser_semver;
 mod pep440_local;
 mod python_api;

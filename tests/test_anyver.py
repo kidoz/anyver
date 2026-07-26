@@ -1410,3 +1410,40 @@ class TestNewEcosystems:
     @pytest.mark.parametrize("ecosystem", ["dart", "julia", "helm"])
     def test_semver_new_ecosystem_modes(self, ecosystem):
         assert anyver.compare("1.0.0", "1.0.1", ecosystem=ecosystem) == -1
+
+
+# ============================================================================
+# Maven mode implements Apache Maven's ComparableVersion (see
+# src/strategies/maven.rs). These cover the behaviour that differs from the
+# generic comparator, plus the hash contract that Maven's canonicalization
+# would otherwise break.
+# ============================================================================
+
+
+class TestMavenComparableVersion:
+    @pytest.mark.parametrize(
+        "a,b,expected",
+        [
+            ("1.0-jre", "1.0", 1),  # unknown qualifiers outrank the release
+            ("1.0-sp-1", "1.0-foo", -1),
+            ("1.0-a", "1.0-alpha", 1),  # `a` expands only before a digit
+            ("1-a1", "1-alpha-1", 0),
+            ("1-1", "1.1", -1),  # `-` nests, `.` does not
+            ("1.0-1", "1.0.1", -1),
+            ("1.0.0.x1", "1.0.0-x2", -1),
+            ("1.0+build1", "1.0", 1),  # no build metadata in Maven
+            ("1:2.0", "2.0", -1),  # no epoch either
+            ("18446744073709551616", "18446744073709551617", -1),
+        ],
+    )
+    def test_comparable_version_semantics(self, a, b, expected):
+        assert anyver.compare(a, b, ecosystem="maven") == expected
+
+    def test_deep_nesting_is_rejected_not_flattened(self):
+        with pytest.raises(ValueError, match="nests more than"):
+            anyver.compare("-".join(["1"] * 5000), "1", ecosystem="maven")
+
+    def test_non_ascii_numeral_is_rejected(self):
+        # Maven reads `1.٢` as `1.2`; the ASCII tokenizer cannot, so it refuses.
+        with pytest.raises(ValueError, match="non-ASCII numeral"):
+            anyver.compare("1.٢", "1.2", ecosystem="maven")

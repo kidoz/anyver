@@ -33,6 +33,13 @@ pub(crate) fn validate_maven(input: &str) -> Result<(), String> {
     if !s.as_bytes()[0].is_ascii_digit() {
         return Err(format!("Maven version must start with a digit: '{input}'"));
     }
+    // Java's `Character.isDigit`/`BigInteger` read any Unicode decimal numeral
+    // as a number, so Maven compares `1.٢` equal to `1.2`. The ASCII tokenizer
+    // in `strategies::maven` would silently order it as text instead — reject
+    // rather than diverge.
+    if let Some(c) = s.chars().find(|c| c.is_numeric() && !c.is_ascii_digit()) {
+        return Err(format!("Maven version contains a non-ASCII numeral '{c}': '{input}'"));
+    }
     Ok(())
 }
 

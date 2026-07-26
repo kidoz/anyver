@@ -1,13 +1,14 @@
 //! Strategy trait, the per-ecosystem parsed representation, and ecosystem
 //! dispatch. This is the wiring layer: it picks a [`VersionStrategy`] for an
 //! [`Ecosystem`] and routes parse/compare calls to the responsibility modules
-//! (`generic`, `semver`, `pep440`, `debian`, `rpm`, `validators`).
+//! (`generic`, `semver`, `pep440`, `debian`, `rpm`, `maven`, `validators`).
 
 use crate::parser::{Ecosystem, ParsedVersion, parse_generic};
 use std::cmp::Ordering;
 
 use super::debian::{DebianVersion, cmp_debian, parse_debian};
 use super::generic::cmp_parsed;
+use super::maven::{MavenVersion, cmp_maven, parse_maven};
 use super::pep440::{Pep440Version, cmp_pep440, parse_pep440};
 use super::rpm::{RpmVersion, cmp_rpm, parse_rpm};
 use super::semver::{SemVer, cmp_semver_strict, parse_semver_strict};
@@ -25,6 +26,7 @@ pub(crate) enum ParsedRepr {
     Debian(DebianVersion),
     Rpm(RpmVersion),
     Pep440(Pep440Version),
+    Maven(MavenVersion),
 }
 
 pub(crate) trait VersionStrategy {
@@ -173,9 +175,26 @@ impl VersionStrategy for Pep440Strategy {
     }
 }
 
+// Maven ranks qualifiers by its own table and nests on `-`, so it needs the
+// dedicated `ComparableVersion` port rather than the generic comparator: the
+// generic one sorts unknown qualifiers *below* the release (`1.0-jre < 1.0`)
+// where Maven sorts them above, and flattens the nesting that makes
+// `1.0-1 < 1.0.1`.
+impl VersionStrategy for MavenStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        validate_maven(input)?;
+        parse_maven(input).map(ParsedRepr::Maven)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Maven(a), ParsedRepr::Maven(b)) => cmp_maven(a, b),
+            _ => unreachable!(),
+        }
+    }
+}
+
 // Validate→generic ecosystems
 impl_generic_strategy!(RubyStrategy, validate_ruby);
-impl_generic_strategy!(MavenStrategy, validate_maven);
 impl_generic_strategy!(NugetStrategy, validate_nuget);
 impl_generic_strategy!(ComposerStrategy, validate_composer);
 impl_generic_strategy!(CalverStrategy, validate_calver);
