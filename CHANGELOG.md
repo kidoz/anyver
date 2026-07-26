@@ -2,11 +2,21 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-26
+
+Minor release: `ecosystem="maven"` becomes an exact port of Apache Maven's
+`ComparableVersion`, and `hash(Version(...))` now holds the Python hash
+contract for ecosystems whose comparator equates versions the generic parse
+keeps apart. Maven ordering changes are called out under Changed — most
+visibly, unknown qualifiers now sort above the release (`1.0-jre > 1.0`), as
+Maven specifies.
+
 ### Changed
 - `ecosystem="maven"` (`mvn`) now uses a dedicated port of Apache Maven's
   `ComparableVersion` instead of the generic segment comparator. Verified
-  against maven-artifact 3.9.16 by exhaustive differential testing (388,800
-  pairs over three fuzz-generated corpora, zero divergences). Behavior changes,
+  against maven-artifact 3.9.16 by exhaustive differential testing (over
+  690,000 all-pairs comparisons across six fuzz-generated corpora, zero
+  divergences). Behavior changes,
   all of them toward Maven's documented version order:
   - Unknown qualifiers now sort **above** the release and above `sp`, and
     lexically among themselves: `1.0-jre > 1.0`, `1.0-foo > 1.0-sp-1`. The
