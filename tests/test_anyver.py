@@ -1439,6 +1439,22 @@ class TestMavenComparableVersion:
     def test_comparable_version_semantics(self, a, b, expected):
         assert anyver.compare(a, b, ecosystem="maven") == expected
 
+    @pytest.mark.parametrize(
+        "a,b",
+        [("1.0-1", "1.0.0-1"), ("1-a1", "1-alpha-1"), ("1.01", "1.1"), ("1.0-ga", "1")],
+    )
+    def test_hash_contract_holds_for_equal_versions(self, a, b):
+        va, vb = Version(a, ecosystem="maven"), Version(b, ecosystem="maven")
+        assert va == vb
+        assert hash(va) == hash(vb)
+        assert len({va, vb}) == 1
+
+    @pytest.mark.parametrize("version", ["1.0.0", "5.10.0-M1", "2.6.7.1", "1.0-jre"])
+    def test_hash_matches_generic_mode_for_ordinary_versions(self, version):
+        maven, generic = Version(version, ecosystem="maven"), Version(version)
+        assert maven == generic
+        assert hash(maven) == hash(generic)
+
     def test_deep_nesting_is_rejected_not_flattened(self):
         with pytest.raises(ValueError, match="nests more than"):
             anyver.compare("-".join(["1"] * 5000), "1", ecosystem="maven")
@@ -1447,3 +1463,10 @@ class TestMavenComparableVersion:
         # Maven reads `1.٢` as `1.2`; the ASCII tokenizer cannot, so it refuses.
         with pytest.raises(ValueError, match="non-ASCII numeral"):
             anyver.compare("1.٢", "1.2", ecosystem="maven")
+
+
+class TestPep440HashContract:
+    def test_equal_spellings_hash_equal(self):
+        a, b = Version("1.0a1", ecosystem="pep440"), Version("1.0alpha1", ecosystem="pep440")
+        assert a == b
+        assert hash(a) == hash(b)

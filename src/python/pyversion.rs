@@ -38,17 +38,13 @@ fn key_tuple<'py>(py: Python<'py>, a: i64, b: i64, c: &str) -> PyResult<Bound<'p
     .into_any())
 }
 
-/// Encode a segment list into `sort_key()` tuples isomorphic with
-/// `cmp_segments`: strip trailing `Num(0)` and the transparent zeros just
-/// before the first tag, emit `(2, n, "")` for numbers and `(1, weight, text)`
-/// for tags (numbers outrank tags), then a trailing `(1, 30, "")`
-/// release-boundary sentinel so a bare release sorts above any pre-release tag
-/// and below any post-release tag.
-fn encode_segments<'py>(py: Python<'py>, raw_segs: &[Seg]) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let sat = |n: u64| -> i64 { i64::try_from(n).unwrap_or(i64::MAX) };
+/// Split a segment list into the numeric prefix and the tag suffix, dropping
+/// the segments both `cmp_segments` and `__hash__` treat as transparent:
+/// trailing `Num(0)` (via `normalized`) and the zeros sitting just before the
+/// first tag. Shared by `sort_key()` and `__hash__` so the two never disagree.
+fn canonical_parts(raw_segs: &[Seg]) -> (&[Seg], &[Seg]) {
     let segs = normalized(raw_segs);
-    let first_text = segs.iter().position(|s| matches!(s, Seg::Text(_)));
-    let (prefix, suffix) = match first_text {
+    match segs.iter().position(|s| matches!(s, Seg::Text(_))) {
         Some(pos) => {
             let mut end = pos;
             while end > 0 {
@@ -61,7 +57,17 @@ fn encode_segments<'py>(py: Python<'py>, raw_segs: &[Seg]) -> PyResult<Vec<Bound
             (&segs[..end], &segs[pos..])
         }
         None => (segs, &[][..]),
-    };
+    }
+}
+
+/// Encode a segment list into `sort_key()` tuples isomorphic with
+/// `cmp_segments`: emit `(2, n, "")` for numbers and `(1, weight, text)` for
+/// tags (numbers outrank tags), then a trailing `(1, 30, "")` release-boundary
+/// sentinel so a bare release sorts above any pre-release tag and below any
+/// post-release tag.
+fn encode_segments<'py>(py: Python<'py>, raw_segs: &[Seg]) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let sat = |n: u64| -> i64 { i64::try_from(n).unwrap_or(i64::MAX) };
+    let (prefix, suffix) = canonical_parts(raw_segs);
     let mut out: Vec<Bound<'py, PyAny>> = Vec::with_capacity(prefix.len() + suffix.len() + 1);
     for seg in prefix.iter().chain(suffix.iter()) {
         out.push(match seg {
@@ -178,20 +184,45 @@ impl PyVersion {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
-        // Hash based on generic segments only (no ecosystem) because
-        // cross-ecosystem == falls back to generic comparison.
-        // This ensures a == b → hash(a) == hash(b) always holds.
-        self.inner.epoch.hash(&mut hasher);
-        let segs = normalized(&self.inner.segments);
-        for s in segs {
+        // Hash the generic view, not the ecosystem one, because cross-ecosystem
+        // `==` falls back to generic comparison — so `a == b → hash(a) ==
+        // hash(b)` needs the generic segments on both sides.
+        //
+        // Maven is the exception: it equates versions the raw generic parse
+        // keeps apart (`1.0-1 == 1.0.0-1`), so its *canonical* form is hashed
+        // instead. That form re-parses to the same generic segments a plain
+        // release would produce, so the cross-ecosystem case still agrees.
+        let canonical;
+        let parsed = match &self.repr {
+            ParsedRepr::Maven(m) => {
+                canonical = parse(&m.canonical());
+                &canonical
+            }
+            _ => &self.inner,
+        };
+        parsed.epoch.hash(&mut hasher);
+        let (prefix, suffix) = canonical_parts(&parsed.segments);
+        // Release aliases (`final`/`ga`/`release`, weight 30) are transparent:
+        // the comparator ignores them when trailing and Maven's canonical form
+        // drops them outright, so `1.0-final7` must hash like `1.0.7`.
+        let transparent = |s: &&Seg| !matches!(s, Seg::Text(t) if tag_weight(t) == Some(30));
+        for s in prefix.iter().chain(suffix.iter()).filter(transparent) {
             match s {
                 Seg::Num(n) => {
                     0u8.hash(&mut hasher);
                     n.hash(&mut hasher);
                 }
+                // Tags hash by weight, not spelling: `cmp_two` compares known
+                // tags by weight, so `1.0-a` and `1.0-alpha` are equal and must
+                // hash equal. Unknown tags keep comparing (and hashing) by text.
                 Seg::Text(t) => {
-                    1u8.hash(&mut hasher);
-                    t.hash(&mut hasher);
+                    if let Some(w) = tag_weight(t) {
+                        1u8.hash(&mut hasher);
+                        w.hash(&mut hasher);
+                    } else {
+                        2u8.hash(&mut hasher);
+                        t.hash(&mut hasher);
+                    }
                 }
             }
         }
