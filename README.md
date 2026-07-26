@@ -228,7 +228,11 @@ anyver.compare("1!0.1", "2.0", ecosystem="pep440")     # 1
 # cpan/perl, nix/nixpkgs, homebrew/brew, freebsd/freebsd-pkg
 ```
 
-The mature exact-native comparators are Debian/dpkg, RPM, strict SemVer-family modes, and PEP 440 local-version handling. Newer ecosystem modes start with validation plus generic or SemVer-compatible ordering where their native algorithm is not yet fully specialized.
+The mature exact-native comparators are Debian/dpkg, RPM, Maven
+(`ComparableVersion`), strict SemVer-family modes, and PEP 440 local-version
+handling. Newer ecosystem modes start with validation plus generic or
+SemVer-compatible ordering where their native algorithm is not yet fully
+specialized.
 
 ## Database Integration
 
@@ -258,11 +262,17 @@ Version("1.2.3-rc.1").sort_key()
 ```
 
 > **Scope:** the key reproduces the generic/SemVer and PEP 440 orderings exactly.
-> Debian and RPM compare with their native `dpkg`/`rpm` algorithms, which the key
-> approximates via the generic ordering — the same documented approximation the
-> parser makes for those ecosystems. For Debian/RPM, sort with
-> `anyver.sort_versions(..., ecosystem=...)` rather than by `sort_key()` when
-> exact native ordering matters.
+> Debian, RPM and Maven compare with their native `dpkg`/`rpm`/`ComparableVersion`
+> algorithms, which the key approximates via the generic ordering — the same
+> documented approximation the parser makes for those ecosystems. For
+> Debian/RPM/Maven, sort with `anyver.sort_versions(..., ecosystem=...)` rather
+> than by `sort_key()` when exact native ordering matters.
+>
+> `hash(Version(...))` follows the same encoding, with Maven versions hashed
+> through their canonical form so that equal Maven versions always hash equal.
+> Hash equality is guaranteed within one ecosystem; mixing ecosystems in a set
+> or dict is best-effort, since cross-ecosystem `==` falls back to generic
+> comparison.
 
 ## Security Interop
 
@@ -298,8 +308,10 @@ Version("1.0~alpha") < Version("1.0~beta") < Version("1.0")
 # RPM
 Version("1.0~rc1") < Version("1.0") < Version("1.0^git1")
 
-# Maven
+# Maven — ecosystem="maven" implements Apache Maven's ComparableVersion
 Version("1.0-alpha-1") < Version("1.0-SNAPSHOT") < Version("1.0") < Version("1.0-sp-1")
+anyver.compare("1.0-jre", "1.0", ecosystem="maven")   #  1 — unknown qualifiers rank above the release
+anyver.compare("1.0-1", "1.0.1", ecosystem="maven")   # -1 — `-` nests, `.` does not
 
 # Go modules
 Version("v2.0.0+incompatible") == Version("v2.0.0")

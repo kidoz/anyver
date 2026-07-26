@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### Changed
+- `ecosystem="maven"` (`mvn`) now uses a dedicated port of Apache Maven's
+  `ComparableVersion` instead of the generic segment comparator. Verified
+  against maven-artifact 3.9.16 by exhaustive differential testing (388,800
+  pairs over three fuzz-generated corpora, zero divergences). Behavior changes,
+  all of them toward Maven's documented version order:
+  - Unknown qualifiers now sort **above** the release and above `sp`, and
+    lexically among themselves: `1.0-jre > 1.0`, `1.0-foo > 1.0-sp-1`. The
+    generic comparator sorts them below the release, which is unchanged for
+    every other ecosystem.
+  - `a`/`b`/`m` expand to `alpha`/`beta`/`milestone` only when directly
+    followed by a digit (`1-m3` == `1-milestone-3`); bare `1.0-a` is now the
+    unknown qualifier `a`, not alpha. `c`, `pre`, `preview`, `p`, `patch`,
+    `post` and `dev` are likewise unknown qualifiers to Maven.
+  - `-` opens a nested list where `.` does not, so `1.0-1 < 1.0.1` and
+    `1-1 < 1.1`, and a qualifier running into digits nests the same way
+    (`1.0.0.x1 < 1.0.0-x2`).
+  - `+` and `:` are ordinary qualifier text in Maven mode — no build-metadata
+    stripping (`1.0+build1 > 1.0`) and no epoch (`1:2.0 < 2.0`).
+  - Numeric items are arbitrary-precision, so values wider than `u64` no
+    longer collapse to equal.
+
+  `ecosystem="generic"` and Maven-flavoured autodetection are unaffected.
+  `Version.sort_key()` still uses the generic encoding, so sort Maven versions
+  with `anyver.sort_versions(..., ecosystem="maven")` when exact Maven order
+  matters (same documented caveat as Debian/RPM).
+
+  Two inputs are rejected rather than ordered differently from Maven:
+  - versions nesting more than 256 levels deep (`1-1-1-…`), which would
+    otherwise need unbounded recursion to compare;
+  - versions containing non-ASCII numerals, which Java reads numerically
+    (Maven compares `1.٢` equal to `1.2`).
+
+### Fixed
+- `hash(Version(...))` now satisfies the hash contract for ecosystems whose
+  comparator equates versions the generic parse keeps apart:
+  - Maven versions hash their canonical form, so `1.0-1`/`1.0.0-1` and
+    `1-a1`/`1-alpha-1` — equal under Maven — no longer land in a set twice.
+  - Known tags hash by weight rather than spelling, fixing PEP 440 `1.0a1` vs
+    `1.0alpha1` and generic `1.0-a` vs `1.0-alpha`, which compared equal but
+    hashed differently.
+  - Release aliases (`final`/`ga`/`release`) are transparent to the hash, and
+    `__hash__` now shares its segment canonicalization with `sort_key()`.
+
+  Hash equality is guaranteed within an ecosystem. Across ecosystems it holds
+  for versions that parse the same way in both (verified over a realistic Maven
+  corpus); it cannot hold universally, because cross-ecosystem `==` falls back
+  to generic comparison and the two equality relations genuinely differ.
+
 ## [1.1.0] - 2026-06-27
 
 Additive minor release: version range helpers, security-interoperability
