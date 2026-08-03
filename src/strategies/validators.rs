@@ -15,24 +15,12 @@ pub(crate) fn validate_go(input: &str) -> Result<(), String> {
 }
 
 pub(crate) fn validate_ruby(input: &str) -> Result<(), String> {
-    let s = input.trim();
-    if s.is_empty() {
-        return Err("empty Ruby gem version".to_string());
-    }
-    if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!("Ruby gem version must start with a digit: '{input}'"));
-    }
-    Ok(())
+    validate_digit_start(input, "Ruby gem")
 }
 
 pub(crate) fn validate_maven(input: &str) -> Result<(), String> {
+    validate_digit_start(input, "Maven")?;
     let s = input.trim();
-    if s.is_empty() {
-        return Err("empty Maven version".to_string());
-    }
-    if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!("Maven version must start with a digit: '{input}'"));
-    }
     // Java's `Character.isDigit`/`BigInteger` read any Unicode decimal numeral
     // as a number, so Maven compares `1.٢` equal to `1.2`. The ASCII tokenizer
     // in `strategies::maven` would silently order it as text instead — reject
@@ -44,16 +32,11 @@ pub(crate) fn validate_maven(input: &str) -> Result<(), String> {
 }
 
 pub(crate) fn validate_nuget(input: &str) -> Result<(), String> {
-    let s = input.trim();
-    if s.is_empty() {
-        return Err("empty NuGet version".to_string());
-    }
-    if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!("NuGet version must start with a digit: '{input}'"));
-    }
-    Ok(())
+    validate_digit_start(input, "NuGet")
 }
 
+/// Composer tolerates the `v` prefix (`v1.2.3`), so the digit check runs
+/// against the stripped form — but the error still quotes the raw input.
 pub(crate) fn validate_composer(input: &str) -> Result<(), String> {
     let s = strip_v(input.trim());
     if s.is_empty() {
@@ -66,25 +49,11 @@ pub(crate) fn validate_composer(input: &str) -> Result<(), String> {
 }
 
 pub(crate) fn validate_calver(input: &str) -> Result<(), String> {
-    let s = input.trim();
-    if s.is_empty() {
-        return Err("empty CalVer version".to_string());
-    }
-    if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!("CalVer version must start with a digit: '{input}'"));
-    }
-    Ok(())
+    validate_digit_start(input, "CalVer")
 }
 
 pub(crate) fn validate_alpine(input: &str) -> Result<(), String> {
-    let s = input.trim();
-    if s.is_empty() {
-        return Err("empty Alpine version".to_string());
-    }
-    if !s.as_bytes()[0].is_ascii_digit() {
-        return Err(format!("Alpine version must start with a digit: '{input}'"));
-    }
-    Ok(())
+    validate_digit_start(input, "Alpine")
 }
 
 pub(crate) fn validate_docker(input: &str) -> Result<(), String> {

@@ -185,10 +185,10 @@ pub(crate) fn autodetect_ecosystem(version: &str) -> Ecosystem {
     if lower.ends_with("-snapshot") {
         return Ecosystem::Maven;
     }
-    if lower.contains(".post")
-        || lower.contains(".dev")
-        || lower.contains("py") && lower.contains('_')
-    {
+    // Conda build strings (`1.0-py38_0`). `.post`/`.dev` are *not* tested here:
+    // the PEP 440 check above already claimed them, so repeating them would be
+    // dead weight rather than an additional signal.
+    if lower.contains("py") && lower.contains('_') {
         return Ecosystem::Conda;
     }
     if lower.contains("_alpha")

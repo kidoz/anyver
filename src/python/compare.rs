@@ -143,15 +143,18 @@ pub(crate) fn max_version<'py>(
         return Err(PyValueError::new_err("empty sequence"));
     }
     let eco = resolve_eco(ecosystem, versions.first())?;
-    let mut parsed: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
+    let parsed: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
         .into_iter()
         .map(|obj| {
             let p = extract_parsed_for_ecosystem(&obj, eco)?;
             Ok((p, obj))
         })
         .collect::<PyResult<Vec<_>>>()?;
-    parsed.sort_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0));
-    Ok(parsed.pop().unwrap().1)
+    // `max_by` keeps the *last* of equal elements, matching what sorting and
+    // taking the tail used to return.
+    let (_, max_obj) =
+        parsed.into_iter().max_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0)).unwrap();
+    Ok(max_obj)
 }
 
 #[pyfunction(signature = (versions, ecosystem = "generic"))]
