@@ -1407,6 +1407,14 @@ class TestRangeHardening:
         assert not anyver.ranges_intersect(">=1.0,<=1.0", "!=1.0")
         assert anyver.ranges_intersect(">=1.0,<=2.0", "!=1.0")
 
+    def test_operator_with_wildcard(self):
+        assert anyver.satisfies("1.2.5", ">=1.2.x")
+        assert not anyver.satisfies("1.1.9", ">=1.2.x")
+        assert anyver.satisfies("1.2.9", "<=1.2.x")
+        assert not anyver.satisfies("1.3.0", "<=1.2.x")
+        assert anyver.satisfies("1.3.0", ">1.2.x")
+        assert not anyver.satisfies("1.2.9", ">1.2.x")
+
 
 class TestNewEcosystems:
     @pytest.mark.parametrize(

@@ -74,30 +74,67 @@ fn parse_num_prefix(input: &str) -> Option<(Vec<u64>, usize)> {
     Some((parts, wildcard_at.unwrap_or(3)))
 }
 
+/// Split a leading comparison operator off a token, if it has one.
+fn split_operator(t: &str) -> Option<(RangeOp, &str)> {
+    // Two-character operators must be tested before their one-character
+    // prefixes so `>=` never binds as `>`.
+    const OPS: [(&str, RangeOp); 6] = [
+        (">=", RangeOp::Ge),
+        ("<=", RangeOp::Le),
+        ("!=", RangeOp::Ne),
+        ("==", RangeOp::Eq),
+        (">", RangeOp::Gt),
+        ("<", RangeOp::Lt),
+    ];
+    OPS.iter().find_map(|(prefix, op)| t.strip_prefix(prefix).map(|rest| (*op, rest.trim())))
+}
+
 fn parse_comparator(token: &str) -> Result<Comparator, String> {
     let t = token.trim();
-    let (op, version) = if let Some(v) = t.strip_prefix(">=") {
-        (RangeOp::Ge, v)
-    } else if let Some(v) = t.strip_prefix("<=") {
-        (RangeOp::Le, v)
-    } else if let Some(v) = t.strip_prefix("!=") {
-        (RangeOp::Ne, v)
-    } else if let Some(v) = t.strip_prefix("==") {
-        (RangeOp::Eq, v)
-    } else if let Some(v) = t.strip_prefix('>') {
-        (RangeOp::Gt, v)
-    } else if let Some(v) = t.strip_prefix('<') {
-        (RangeOp::Lt, v)
-    } else {
+    let Some((op, version)) = split_operator(t) else {
         return Err(format!(
             "invalid comparator: '{t}'; expected operator (>=, <=, >, <, ==, !=) followed by version"
         ));
     };
-    let version = version.trim();
     if version.is_empty() {
         return Err(format!("missing version in comparator '{token}'"));
     }
     Ok(Comparator { op, version: version.to_string() })
+}
+
+fn has_wildcard(token: &str) -> bool {
+    token.contains(".x") || token.contains(".X") || token.contains(".*")
+}
+
+/// Resolve an operator applied to a wildcarded version (`>=1.2.x`, `<=2.x`).
+/// The bound has to land on the *edge* of the wildcarded window, which for the
+/// exclusive operators is not the wildcard's own prefix: `>1.2.x` means "above
+/// everything in 1.2", i.e. `>=1.3.0`, and `<=1.2.x` means `<1.3.0`. This is
+/// npm's reading of the same syntax.
+fn expand_operator_wildcard(op: RangeOp, rest: &str) -> Result<Vec<Comparator>, String> {
+    let (parts, depth) =
+        parse_num_prefix(rest).ok_or_else(|| format!("invalid wildcard range: '{rest}'"))?;
+    if depth == 0 {
+        // A bare `>=x` constrains nothing.
+        return Ok(Vec::new());
+    }
+    let major = *parts.first().unwrap_or(&0);
+    let minor = *parts.get(1).unwrap_or(&0);
+    let lower = fmt_triple(major, minor, 0);
+    let upper =
+        if depth == 1 { fmt_triple(major + 1, 0, 0) } else { fmt_triple(major, minor + 1, 0) };
+    Ok(match op {
+        RangeOp::Ge | RangeOp::Lt => vec![Comparator { op, version: lower }],
+        RangeOp::Gt => vec![Comparator { op: RangeOp::Ge, version: upper }],
+        RangeOp::Le => vec![Comparator { op: RangeOp::Lt, version: upper }],
+        RangeOp::Eq => vec![
+            Comparator { op: RangeOp::Ge, version: lower },
+            Comparator { op: RangeOp::Lt, version: upper },
+        ],
+        RangeOp::Ne => {
+            return Err(format!("'!=' does not support wildcard versions: '!={rest}'"));
+        }
+    })
 }
 
 fn expand_caret(rest: &str) -> Result<Vec<Comparator>, String> {
@@ -139,6 +176,10 @@ fn expand_tilde(rest: &str) -> Result<Vec<Comparator>, String> {
 fn expand_x_range(token: &str) -> Result<Vec<Comparator>, String> {
     let (parts, depth) =
         parse_num_prefix(token).ok_or_else(|| format!("invalid x-range: '{token}'"))?;
+    if depth == 0 {
+        // Leading wildcard (`x.1`) — nothing is constrained.
+        return Ok(Vec::new());
+    }
     let major = *parts.first().unwrap_or(&0);
     let minor = *parts.get(1).unwrap_or(&0);
     let lower = fmt_triple(major, minor, 0);
@@ -212,7 +253,15 @@ fn expand_token(token: &str) -> Result<Vec<Comparator>, String> {
     if let Some(rest) = t.strip_prefix('~') {
         return expand_tilde(rest);
     }
-    if t.contains(".x") || t.contains(".X") || t.contains(".*") {
+    // An operator has to be stripped *before* the wildcard test, or `>=1.2.x`
+    // reaches `expand_x_range` with the operator still glued to the version and
+    // fails to parse.
+    if let Some((op, rest)) = split_operator(t)
+        && has_wildcard(rest)
+    {
+        return expand_operator_wildcard(op, rest);
+    }
+    if has_wildcard(t) {
         return expand_x_range(t);
     }
     Ok(vec![parse_comparator(t)?])

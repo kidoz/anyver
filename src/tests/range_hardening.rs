@@ -67,3 +67,43 @@ fn test_intersect_respects_not_equals_on_a_point_overlap() {
     // A wider overlap survives the same exclusion.
     assert!(intersects(">=1.0,<=2.0", "!=1.0"));
 }
+
+// ====================================================================
+// Operator + wildcard (`>=1.2.x`)
+// ====================================================================
+
+fn contains(range: &str, version: &str) -> bool {
+    RangeSet::parse(range).unwrap().contains(Ecosystem::Generic, version).unwrap()
+}
+
+#[test]
+fn test_ge_wildcard_lands_on_the_lower_edge() {
+    assert!(contains(">=1.2.x", "1.2.0"));
+    assert!(contains(">=1.2.x", "1.5.0"));
+    assert!(!contains(">=1.2.x", "1.1.9"));
+}
+
+#[test]
+fn test_gt_wildcard_clears_the_whole_window() {
+    // `>1.2.x` is "above everything in 1.2", i.e. `>=1.3.0`.
+    assert!(!contains(">1.2.x", "1.2.9"));
+    assert!(contains(">1.2.x", "1.3.0"));
+}
+
+#[test]
+fn test_le_wildcard_includes_the_whole_window() {
+    assert!(contains("<=1.2.x", "1.2.9"));
+    assert!(!contains("<=1.2.x", "1.3.0"));
+}
+
+#[test]
+fn test_lt_wildcard_excludes_the_whole_window() {
+    assert!(contains("<1.2.x", "1.1.0"));
+    assert!(!contains("<1.2.x", "1.2.0"));
+}
+
+#[test]
+fn test_bare_wildcard_range_unchanged() {
+    assert!(contains("1.2.x", "1.2.5"));
+    assert!(!contains("1.2.x", "1.3.0"));
+}
