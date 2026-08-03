@@ -136,8 +136,22 @@ impl PyVersion {
         } else if let Ok(s) = other.extract::<String>() {
             // Parse the str with this Version's ecosystem, so the left-hand
             // side's declared ecosystem wins — matching Version.compare(str).
-            let parsed = parse_for_ecosystem(self.eco, &s).map_err(PyValueError::new_err)?;
-            compare_for_ecosystem(self.eco, &self.repr, &parsed)
+            match parse_for_ecosystem(self.eco, &s) {
+                Ok(parsed) => compare_for_ecosystem(self.eco, &self.repr, &parsed),
+                // `==`/`!=` have to answer rather than raise: a string that
+                // isn't a valid version for this ecosystem simply isn't equal
+                // to it. Raising here breaks `in`, dict lookups and
+                // `assertEqual`, which all assume `__eq__` is total. Ordering
+                // against an unparseable string stays an error.
+                Err(e) => {
+                    let answer = match op {
+                        CompareOp::Eq => false,
+                        CompareOp::Ne => true,
+                        _ => return Err(PyValueError::new_err(e)),
+                    };
+                    return Ok(answer.into_pyobject(py)?.to_owned().into_any());
+                }
+            }
         } else {
             return Ok(py.NotImplemented().into_bound(py));
         };

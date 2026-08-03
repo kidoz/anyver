@@ -1560,6 +1560,34 @@ class TestRangeHardening:
         assert not anyver.satisfies("1.2.9", ">1.2.x")
 
 
+class TestVersionEqualityIsTotal:
+    """`__eq__` must answer for any string, or `in` and dict lookups break."""
+
+    def test_eq_with_unparseable_string_is_false(self):
+        v = Version("1.0.0", ecosystem="semver")
+        assert not (v == "not-a-version")
+        assert v != "not-a-version"
+
+    def test_membership_does_not_raise(self):
+        v = Version("1.0.0", ecosystem="semver")
+        assert "not-a-version" not in [v]
+        assert v in [v]
+
+    def test_eq_with_valid_string_still_compares(self):
+        v = Version("1.0.0", ecosystem="semver")
+        assert v == "1.0.0"
+        assert v != "2.0.0"
+
+    def test_ordering_against_unparseable_string_still_raises(self):
+        v = Version("1.0.0", ecosystem="semver")
+        with pytest.raises(ValueError):
+            _ = v < "not-a-version"
+
+    def test_eq_with_non_string_is_not_implemented(self):
+        assert Version("1.0.0") != 42
+        assert not (Version("1.0.0") == 42)
+
+
 class TestNewEcosystems:
     @pytest.mark.parametrize(
         "ecosystem,a,b",
