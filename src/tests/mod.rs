@@ -38,3 +38,4 @@ mod maven_comparable;
 mod parser_semver;
 mod pep440_local;
 mod python_api;
+mod range_hardening;

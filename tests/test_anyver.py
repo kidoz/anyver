@@ -1388,6 +1388,18 @@ class TestSecurityInterop:
         assert not anyver.osv_affected("1.2.0", affected)
 
 
+class TestRangeHardening:
+    def test_empty_range_is_rejected(self):
+        """A blank range must not silently match every version."""
+        for spec in ["", "   ", ","]:
+            with pytest.raises(ValueError):
+                anyver.satisfies("1.0.0", spec)
+
+    def test_star_still_matches_everything(self):
+        assert anyver.satisfies("0.0.1", "*")
+        assert anyver.satisfies("99.0.0", "*")
+
+
 class TestNewEcosystems:
     @pytest.mark.parametrize(
         "ecosystem,a,b",

@@ -268,14 +268,20 @@ impl RangeSet {
     pub(crate) fn parse(input: &str) -> Result<Self, String> {
         let mut branches = Vec::new();
         for branch in input.split("||") {
+            let tokens = split_branch(branch);
+            // A branch with no tokens is an *absent* constraint, not an
+            // unconstrained one. Silently treating it as "matches everything"
+            // turns a blank range into a universal match, which is the wrong
+            // direction to fail in for vulnerability matching — `*` is the way
+            // to say "any version".
+            if tokens.is_empty() {
+                return Err(format!("empty range: '{input}'; use '*' to match every version"));
+            }
             let mut clauses = Vec::new();
-            for token in split_branch(branch) {
+            for token in tokens {
                 clauses.extend(expand_token(&token)?);
             }
             branches.push(clauses);
-        }
-        if branches.is_empty() {
-            return Err("empty range".to_string());
         }
         Ok(Self { branches })
     }
