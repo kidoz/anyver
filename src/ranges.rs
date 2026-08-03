@@ -33,6 +33,7 @@ struct Interval {
     lower: Option<(String, bool)>,
     upper: Option<(String, bool)>,
     equals: Vec<String>,
+    not_equals: Vec<String>,
 }
 
 fn cmp_versions(ecosystem: Ecosystem, a: &str, b: &str) -> Result<Ordering, String> {
@@ -323,19 +324,27 @@ impl RangeSet {
     }
 }
 
-fn interval_for(branch: &[Comparator]) -> Interval {
-    let mut interval = Interval { lower: None, upper: None, equals: Vec::new() };
+/// Collapse a branch's clauses (which are `AND`ed) into one interval. Repeated
+/// bounds have to be *folded* — keeping only the last would make the result
+/// depend on clause order, so `>=2.0,>=1.0` would read as `>=1.0` and report a
+/// spurious overlap with `<1.5`.
+fn interval_for(ecosystem: Ecosystem, branch: &[Comparator]) -> Result<Interval, String> {
+    let mut interval =
+        Interval { lower: None, upper: None, equals: Vec::new(), not_equals: Vec::new() };
     for clause in branch {
+        let bound = Some((clause.version.clone(), matches!(clause.op, RangeOp::Ge | RangeOp::Le)));
         match clause.op {
-            RangeOp::Gt => interval.lower = Some((clause.version.clone(), false)),
-            RangeOp::Ge => interval.lower = Some((clause.version.clone(), true)),
-            RangeOp::Lt => interval.upper = Some((clause.version.clone(), false)),
-            RangeOp::Le => interval.upper = Some((clause.version.clone(), true)),
+            RangeOp::Gt | RangeOp::Ge => {
+                interval.lower = tighter_lower(ecosystem, interval.lower.take(), bound)?;
+            }
+            RangeOp::Lt | RangeOp::Le => {
+                interval.upper = tighter_upper(ecosystem, interval.upper.take(), bound)?;
+            }
             RangeOp::Eq => interval.equals.push(clause.version.clone()),
-            RangeOp::Ne => {}
+            RangeOp::Ne => interval.not_equals.push(clause.version.clone()),
         }
     }
-    interval
+    Ok(interval)
 }
 
 fn version_in_branch(
@@ -351,8 +360,8 @@ fn branches_intersect(
     left: &[Comparator],
     right: &[Comparator],
 ) -> Result<bool, String> {
-    let li = interval_for(left);
-    let ri = interval_for(right);
+    let li = interval_for(ecosystem, left)?;
+    let ri = interval_for(ecosystem, right)?;
     for eq in &li.equals {
         if version_in_branch(ecosystem, right, eq)? && version_in_branch(ecosystem, left, eq)? {
             return Ok(true);
@@ -367,18 +376,35 @@ fn branches_intersect(
         return Ok(false);
     }
 
-    let lower = strongest_lower(ecosystem, li.lower, ri.lower)?;
-    let upper = weakest_upper(ecosystem, li.upper, ri.upper)?;
-    match (&lower, &upper) {
-        (Some((lv, li_inc)), Some((uv, ui_inc))) => {
-            let ord = cmp_versions(ecosystem, lv, uv)?;
-            Ok(ord == Ordering::Less || (ord == Ordering::Equal && *li_inc && *ui_inc))
+    let lower = tighter_lower(ecosystem, li.lower, ri.lower)?;
+    let upper = tighter_upper(ecosystem, li.upper, ri.upper)?;
+    let (Some((lv, lower_inc)), Some((uv, upper_inc))) = (&lower, &upper) else {
+        // Unbounded on at least one side, and neither side pins an exact
+        // version — the overlap is infinite, so no `!=` can empty it.
+        return Ok(true);
+    };
+    match cmp_versions(ecosystem, lv, uv)? {
+        Ordering::Less => Ok(true),
+        Ordering::Greater => Ok(false),
+        Ordering::Equal => {
+            if !(*lower_inc && *upper_inc) {
+                return Ok(false);
+            }
+            // The overlap has collapsed to the single version `lv`; a `!=` on
+            // either side excludes exactly that version and empties it.
+            for excluded in li.not_equals.iter().chain(ri.not_equals.iter()) {
+                if cmp_versions(ecosystem, lv, excluded)? == Ordering::Equal {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
         }
-        _ => Ok(true),
     }
 }
 
-fn strongest_lower(
+/// The more restrictive of two lower bounds — the greater version, and the
+/// exclusive one when they name the same version.
+fn tighter_lower(
     ecosystem: Ecosystem,
     a: Option<(String, bool)>,
     b: Option<(String, bool)>,
@@ -397,7 +423,9 @@ fn strongest_lower(
     }
 }
 
-fn weakest_upper(
+/// The more restrictive of two upper bounds — the lesser version, and the
+/// exclusive one when they name the same version.
+fn tighter_upper(
     ecosystem: Ecosystem,
     a: Option<(String, bool)>,
     b: Option<(String, bool)>,

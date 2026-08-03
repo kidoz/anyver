@@ -1399,6 +1399,14 @@ class TestRangeHardening:
         assert anyver.satisfies("0.0.1", "*")
         assert anyver.satisfies("99.0.0", "*")
 
+    def test_intersect_is_order_independent(self):
+        assert not anyver.ranges_intersect(">=2.0,>=1.0", "<1.5")
+        assert not anyver.ranges_intersect(">=1.0,>=2.0", "<1.5")
+
+    def test_intersect_respects_not_equals(self):
+        assert not anyver.ranges_intersect(">=1.0,<=1.0", "!=1.0")
+        assert anyver.ranges_intersect(">=1.0,<=2.0", "!=1.0")
+
 
 class TestNewEcosystems:
     @pytest.mark.parametrize(
