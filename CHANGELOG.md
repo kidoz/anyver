@@ -2,6 +2,63 @@
 
 ## [Unreleased]
 
+Correctness pass over the security-interop layer (`osv_affected`,
+`vers_contains`, `build_vers`) and the range engine behind it. Every issue
+fixed here produced a *silent* wrong answer rather than an error, and three of
+them under-reported affected versions.
+
+### Fixed
+- `osv_affected()` no longer collapses an OSV range's events into a single
+  interval. An OSV range is an event timeline: `introduced` opens a window and
+  `fixed`/`last_affected` closes it, and one range routinely carries several
+  pairs. Folding them kept only the last window, so a record with events
+  `0 → 1.2.0, 2.0.0 → 2.3.0` reported every version below 1.2.0 as
+  **unaffected**. Each pair is now its own window and a version matching any of
+  them is affected.
+- `osv_affected()` accepts OSV's ecosystem names. `PyPI` — the most common value
+  in the OSV corpus — previously raised `ValueError`, as did every distro name
+  carrying OSV's release suffix (`Debian:11`, `Alpine:v3.18`, `Ubuntu:22.04:LTS`).
+  The suffix is now stripped, distro names map to the right comparator, and an
+  unrecognised ecosystem falls back to the generic comparator instead of failing
+  the whole record.
+- `osv_affected()` skips `type: "GIT"` ranges, whose events are commit hashes.
+  They were parsed as versions, which raised on strict ecosystems.
+- An empty or whitespace-only range is now rejected. `satisfies("1.0", "")` and
+  `vers_contains("vers:npm/", ...)` returned `True` for *every* version — the
+  wrong direction to fail in for vulnerability matching. Use `*` to match
+  everything. (The pre-existing "empty range" guard was unreachable.)
+- `ranges_intersect()` no longer depends on clause order. Repeated bounds within
+  a branch were last-write-wins, so `>=2.0,>=1.0` was read as `>=1.0` and
+  reported a spurious overlap with `<1.5`. Bounds are now folded to the tightest
+  one, and a `!=` that excludes a single-point overlap is honoured.
+- Wildcards combined with an operator (`>=1.2.x`, `<=2.x`) parse instead of
+  raising `invalid x-range`. The bound lands on the edge of the wildcarded
+  window, matching npm: `>1.2.x` is `>=1.3.0`, `<=1.2.x` is `<1.3.0`.
+- `Version.__eq__` returns `False` for a string that isn't a valid version in
+  that ecosystem, instead of raising `ValueError`. Raising broke `in`, dict and
+  set lookups, and `assertEqual`. Ordering comparisons (`<`, `>`, …) against an
+  unparseable string still raise.
+- Removed an unreachable clause in ecosystem auto-detection: the Conda check
+  re-tested `.post`/`.dev`, which the PEP 440 check above it had already
+  claimed. Detection results are unchanged.
+
+### Changed
+- `vers:` strings now follow the PURL-spec VERS grammar. Constraints are
+  separated by `|` (a canonical string such as `vers:npm/>=2.0.0|<5.0.0`
+  previously failed to parse) and evaluated as a *set* rather than a
+  conjunction, so `vers:npm/1.2.3|>=2.0.0|<5.0.0` matches 1.2.3 as well as
+  `[2.0.0, 5.0.0)`. `,` and whitespace are still accepted on input.
+- `build_vers()` emits the VERS versioning scheme, which is the PURL type:
+  `build_vers("pep440", ...)` and `build_vers("pypi", ...)` both produce
+  `vers:pypi/...` where the former produced the unparseable `vers:pep440/...`.
+  Output is joined with `|`. `build_vers()` now rejects npm/cargo shorthand
+  (`^1.2.3`, `~1.2`), which has no VERS equivalent and was previously copied
+  into the output verbatim; use `satisfies()` for that syntax.
+- `pypi` is accepted as an alias for the `pep440` ecosystem.
+
+These four functions are listed as outside the SemVer-stable surface in the
+README, so the behaviour changes land in a minor release.
+
 ## [1.2.0] - 2026-07-26
 
 Minor release: `ecosystem="maven"` becomes an exact port of Apache Maven's

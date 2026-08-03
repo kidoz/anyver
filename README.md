@@ -276,7 +276,7 @@ Version("1.2.3-rc.1").sort_key()
 
 ## Security Interop
 
-Helpers are provided for package-url (PURL), VERS-style version ranges, and OSV-shaped affected records:
+Helpers are provided for package-url (PURL), VERS version ranges, and OSV-shaped affected records:
 
 ```python
 anyver.parse_purl("pkg:npm/%40scope/name@1.2.3")
@@ -286,15 +286,45 @@ anyver.parse_purl("pkg:npm/%40scope/name@1.2.3")
 anyver.build_purl("npm", "name", "1.2.3", "%40scope")
 # "pkg:npm/%40scope/name@1.2.3"
 
-vers = anyver.build_vers("npm", ">=1.0.0,<2.0.0")
-anyver.vers_contains(vers, "1.5.0")  # True
+anyver.build_vers("pypi", ">=1.0.0|<2.0.0")   # "vers:pypi/>=1.0.0|<2.0.0"
+anyver.vers_contains("vers:npm/1.2.3|>=2.0.0|<5.0.0", "1.2.3")  # True
+anyver.vers_contains("vers:npm/1.2.3|>=2.0.0|<5.0.0", "1.5.0")  # False
+anyver.vers_contains("vers:npm/1.2.3|>=2.0.0|<5.0.0", "3.0.0")  # True
 
 affected = {
-    "package": {"ecosystem": "npm", "name": "demo"},
-    "ranges": [{"events": [{"introduced": "1.0.0"}, {"fixed": "1.2.0"}]}],
+    "package": {"ecosystem": "PyPI", "name": "demo"},
+    "ranges": [{"type": "ECOSYSTEM", "events": [
+        {"introduced": "0"}, {"fixed": "1.2.0"},
+        {"introduced": "2.0.0"}, {"fixed": "2.3.0"},
+    ]}],
 }
-anyver.osv_affected("1.1.0", affected)  # True
+anyver.osv_affected("1.1.0", affected)  # True  — first window
+anyver.osv_affected("1.5.0", affected)  # False — between windows
+anyver.osv_affected("2.1.0", affected)  # True  — second window
 ```
+
+**VERS.** `vers:` strings follow the [PURL-spec VERS grammar][vers]: constraints
+are separated by `|` and the versioning scheme is the PURL type (`pypi`, not
+`pep440`). Constraints form a *set*, not a conjunction — `1.2.3|>=2.0.0|<5.0.0`
+matches 1.2.3 as well as everything in `[2.0.0, 5.0.0)`. `,` and whitespace are
+still accepted as separators on input for compatibility, but `build_vers()`
+always emits the canonical `|` form. Use `satisfies()` for npm/cargo-style
+shorthand (`^1.2.3`, `~1.2`, `1.2.x`); VERS has no shorthand syntax.
+
+**OSV.** Each `introduced` → `fixed`/`last_affected` pair in a range is its own
+affected window, and a range with several pairs matches versions in any of them.
+`type: "GIT"` ranges are skipped, since their events are commit hashes rather
+than versions. Ecosystem names are read as OSV writes them, including the
+release suffix (`Debian:11`, `Alpine:v3.18`); an ecosystem anyver doesn't
+recognise falls back to the generic comparator rather than raising.
+
+**Ranges.** A blank range is an error, not a universal match — pass `*` to match
+every version.
+
+[vers]: https://github.com/package-url/purl-spec/blob/main/VERSION-RANGE-SPEC.rst
+
+> **Note:** PURL components are returned exactly as they appear in the string;
+> percent-encoded values (`%40scope`) are not decoded.
 
 ## Cross-Ecosystem Examples
 
