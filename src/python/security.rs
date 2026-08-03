@@ -5,8 +5,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::parser::Ecosystem;
-use crate::ranges::RangeSet;
-use crate::security::{Purl, Vers};
+use crate::ranges::{Comparator, RangeOp, RangeSet};
+use crate::security::{Purl, Vers, osv_ecosystem};
 
 use super::conv::eco_from_str;
 
@@ -81,7 +81,7 @@ pub(crate) fn osv_affected(
     } else if let Some(package) = affected.get_item("package")? {
         let package = package.cast::<PyDict>()?;
         match package.get_item("ecosystem")? {
-            Some(value) => eco_from_str(&value.extract::<String>()?)?,
+            Some(value) => osv_ecosystem(&value.extract::<String>()?),
             None => Ecosystem::Generic,
         }
     } else {
@@ -92,7 +92,12 @@ pub(crate) fn osv_affected(
         let ranges = ranges_obj.cast::<PyList>()?;
         for item in ranges {
             let range = item.cast::<PyDict>()?;
-            if range_contains_osv_events(version, eco, range)? {
+            let branches = osv_range_branches(range)?;
+            if branches.is_empty() {
+                continue;
+            }
+            let windows = RangeSet { branches };
+            if windows.contains(eco, version).map_err(PyValueError::new_err)? {
                 return Ok(true);
             }
         }
@@ -110,46 +115,60 @@ pub(crate) fn osv_affected(
     Ok(false)
 }
 
-fn range_contains_osv_events(
-    version: &str,
-    ecosystem: Ecosystem,
-    range: &Bound<'_, PyDict>,
-) -> PyResult<bool> {
+/// Turn one OSV `ranges[]` entry into a set of affected windows, combined with
+/// a logical or.
+///
+/// An OSV range is an event *timeline*, not a single interval: `introduced`
+/// opens a window and `fixed`/`last_affected` closes it, and a range commonly
+/// carries several pairs (`0 → 1.2.0`, then `2.0.0 → 2.3.0`). Folding the
+/// events into one interval keeps only the last window and silently reports
+/// versions in every earlier one as unaffected.
+fn osv_range_branches(range: &Bound<'_, PyDict>) -> PyResult<Vec<Vec<Comparator>>> {
+    // `GIT` ranges carry commit hashes where versions would go; comparing them
+    // as versions is meaningless (and errors out on strict ecosystems).
+    if let Some(kind) = range.get_item("type")?
+        && kind.extract::<String>()?.eq_ignore_ascii_case("git")
+    {
+        return Ok(Vec::new());
+    }
     let Some(events_obj) = range.get_item("events")? else {
-        return Ok(false);
+        return Ok(Vec::new());
     };
     let events = events_obj.cast::<PyList>()?;
-    let mut introduced: Option<String> = None;
-    let mut fixed: Option<String> = None;
-    let mut last_affected: Option<String> = None;
+
+    let mut branches: Vec<Vec<Comparator>> = Vec::new();
+    let mut open: Option<Vec<Comparator>> = None;
     for event_obj in events {
         let event = event_obj.cast::<PyDict>()?;
         if let Some(value) = event.get_item("introduced")? {
-            introduced = Some(value.extract()?);
+            // A second `introduced` without an intervening close means the
+            // previous window runs to infinity.
+            if let Some(previous) = open.take() {
+                branches.push(previous);
+            }
+            let start: String = value.extract()?;
+            // `introduced: "0"` is OSV's "since the beginning" sentinel and is
+            // not a real version — it must not be parsed as one.
+            let clauses = if start == "0" {
+                Vec::new()
+            } else {
+                vec![Comparator { op: RangeOp::Ge, version: start }]
+            };
+            open = Some(clauses);
         }
         if let Some(value) = event.get_item("fixed")? {
-            fixed = Some(value.extract()?);
+            let mut clauses = open.take().unwrap_or_default();
+            clauses.push(Comparator { op: RangeOp::Lt, version: value.extract()? });
+            branches.push(clauses);
         }
         if let Some(value) = event.get_item("last_affected")? {
-            last_affected = Some(value.extract()?);
+            let mut clauses = open.take().unwrap_or_default();
+            clauses.push(Comparator { op: RangeOp::Le, version: value.extract()? });
+            branches.push(clauses);
         }
     }
-
-    let mut clauses = Vec::new();
-    if let Some(start) = introduced
-        && start != "0"
-    {
-        clauses.push(format!(">={start}"));
+    if let Some(previous) = open.take() {
+        branches.push(previous);
     }
-    if let Some(end) = fixed {
-        clauses.push(format!("<{end}"));
-    }
-    if let Some(end) = last_affected {
-        clauses.push(format!("<={end}"));
-    }
-    if clauses.is_empty() {
-        return Ok(false);
-    }
-    let range = RangeSet::parse(&clauses.join(",")).map_err(PyValueError::new_err)?;
-    range.contains(ecosystem, version).map_err(PyValueError::new_err)
+    Ok(branches)
 }

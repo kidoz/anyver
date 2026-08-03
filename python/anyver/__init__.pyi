@@ -155,7 +155,14 @@ def vers_contains(vers: str, version: str) -> bool:
     contains 1.2.3 as well as everything in `[2.0.0, 5.0.0)`.
     """
 
-def osv_affected(version: str, affected: dict[str, Any], ecosystem: str | None = None) -> bool: ...
+def osv_affected(version: str, affected: dict[str, Any], ecosystem: str | None = None) -> bool:
+    """Test a version against an OSV `affected` entry.
+
+    Each `introduced` → `fixed`/`last_affected` pair in a range is a separate
+    affected window. `type: "GIT"` ranges are skipped. When `ecosystem` is
+    omitted it is read from `affected["package"]["ecosystem"]`, including OSV's
+    release suffix (`Debian:11`); unrecognised names fall back to `generic`.
+    """
 
 # --- Version bumping ---
 def bump_major(version: str) -> str: ...

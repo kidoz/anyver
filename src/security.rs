@@ -113,6 +113,27 @@ impl Purl {
     }
 }
 
+/// Map an OSV `affected.package.ecosystem` value onto a comparison algorithm.
+///
+/// OSV qualifies distro ecosystems with a release (`Debian:11`, `Alpine:v3.18`,
+/// `Ubuntu:22.04:LTS`); only the leading name selects the algorithm. Names with
+/// no anyver equivalent (`GitHub Actions`, `Android`, `Linux`, `OSS-Fuzz`, …)
+/// fall back to the generic comparator: an unrecognised ecosystem should not
+/// fail the whole record, since the versions in it are usually still ordered
+/// the way the generic parser reads them.
+pub(crate) fn osv_ecosystem(name: &str) -> Ecosystem {
+    let base = name.split(':').next().unwrap_or(name).trim().to_ascii_lowercase();
+    match base.as_str() {
+        "ubuntu" => Ecosystem::Debian,
+        "rocky linux" | "almalinux" | "red hat" | "opensuse" | "suse" | "mageia" | "openeuler"
+        | "photon os" => Ecosystem::Rpm,
+        "wolfi" | "chainguard" | "alpaquita" | "minimos" => Ecosystem::Alpine,
+        "bioconductor" => Ecosystem::Cran,
+        "swifturl" => Ecosystem::Swift,
+        other => Ecosystem::from_str(other).unwrap_or(Ecosystem::Generic),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum VersOp {
     Eq,

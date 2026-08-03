@@ -1,7 +1,7 @@
-//! Regression tests for the VERS grammar.
+//! Regression tests for the VERS grammar and the OSV ecosystem-name mapping.
 
 use crate::parser::Ecosystem;
-use crate::security::Vers;
+use crate::security::{Vers, osv_ecosystem};
 
 // ====================================================================
 // VERS — spec grammar and containment
@@ -93,4 +93,39 @@ fn test_vers_requires_prefix_and_scheme() {
     assert!(Vers::parse("npm/>=1.0").is_err());
     assert!(Vers::parse("vers:npm").is_err());
     assert!(Vers::parse("vers:nosuchthing/>=1.0").is_err());
+}
+
+// ====================================================================
+// OSV ecosystem names
+// ====================================================================
+
+#[test]
+fn test_osv_ecosystem_pypi() {
+    assert_eq!(osv_ecosystem("PyPI"), Ecosystem::Pep440);
+}
+
+#[test]
+fn test_osv_ecosystem_strips_release_suffix() {
+    assert_eq!(osv_ecosystem("Debian:11"), Ecosystem::Debian);
+    assert_eq!(osv_ecosystem("Alpine:v3.18"), Ecosystem::Alpine);
+    assert_eq!(osv_ecosystem("Ubuntu:22.04:LTS"), Ecosystem::Debian);
+    assert_eq!(osv_ecosystem("Rocky Linux:8"), Ecosystem::Rpm);
+}
+
+#[test]
+fn test_osv_ecosystem_known_names() {
+    assert_eq!(osv_ecosystem("npm"), Ecosystem::Npm);
+    assert_eq!(osv_ecosystem("crates.io"), Ecosystem::Crates);
+    assert_eq!(osv_ecosystem("RubyGems"), Ecosystem::Ruby);
+    assert_eq!(osv_ecosystem("Packagist"), Ecosystem::Composer);
+    assert_eq!(osv_ecosystem("Wolfi"), Ecosystem::Alpine);
+    assert_eq!(osv_ecosystem("Bioconductor"), Ecosystem::Cran);
+}
+
+#[test]
+fn test_osv_ecosystem_unknown_falls_back_to_generic() {
+    // An unmapped ecosystem must not fail the whole record.
+    assert_eq!(osv_ecosystem("GitHub Actions"), Ecosystem::Generic);
+    assert_eq!(osv_ecosystem("OSS-Fuzz"), Ecosystem::Generic);
+    assert_eq!(osv_ecosystem("Android"), Ecosystem::Generic);
 }

@@ -1430,6 +1430,108 @@ class TestVersSpec:
             anyver.vers_contains("vers:npm/", "1.0.0")
 
 
+class TestOsvAffected:
+    def test_multiple_introduced_fixed_pairs(self):
+        """Each introduced→fixed pair is its own affected window; folding them
+        into one interval would hide every window but the last."""
+        affected = {
+            "package": {"ecosystem": "npm", "name": "demo"},
+            "ranges": [
+                {
+                    "type": "SEMVER",
+                    "events": [
+                        {"introduced": "0"},
+                        {"fixed": "1.2.0"},
+                        {"introduced": "2.0.0"},
+                        {"fixed": "2.3.0"},
+                    ],
+                }
+            ],
+        }
+        assert anyver.osv_affected("1.0.0", affected)
+        assert anyver.osv_affected("1.1.9", affected)
+        assert not anyver.osv_affected("1.2.0", affected)
+        assert not anyver.osv_affected("1.9.0", affected)
+        assert anyver.osv_affected("2.1.0", affected)
+        assert not anyver.osv_affected("2.3.0", affected)
+        assert not anyver.osv_affected("3.0.0", affected)
+
+    def test_introduced_without_fixed_runs_to_infinity(self):
+        affected = {
+            "package": {"ecosystem": "npm", "name": "demo"},
+            "ranges": [{"type": "SEMVER", "events": [{"introduced": "2.0.0"}]}],
+        }
+        assert not anyver.osv_affected("1.0.0", affected)
+        assert anyver.osv_affected("99.0.0", affected)
+
+    def test_introduced_zero_without_fixed_affects_everything(self):
+        affected = {
+            "package": {"ecosystem": "npm", "name": "demo"},
+            "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}]}],
+        }
+        assert anyver.osv_affected("0.0.1", affected)
+        assert anyver.osv_affected("99.0.0", affected)
+
+    def test_last_affected_is_inclusive(self):
+        affected = {
+            "package": {"ecosystem": "npm", "name": "demo"},
+            "ranges": [
+                {
+                    "type": "ECOSYSTEM",
+                    "events": [{"introduced": "1.0.0"}, {"last_affected": "1.2.0"}],
+                }
+            ],
+        }
+        assert anyver.osv_affected("1.2.0", affected)
+        assert not anyver.osv_affected("1.2.1", affected)
+
+    def test_pypi_ecosystem_name(self):
+        affected = {
+            "package": {"ecosystem": "PyPI", "name": "demo"},
+            "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1.2"}]}],
+        }
+        assert anyver.osv_affected("1.0", affected)
+        assert not anyver.osv_affected("1.2", affected)
+
+    def test_distro_ecosystem_with_release_suffix(self):
+        affected = {
+            "package": {"ecosystem": "Debian:11", "name": "demo"},
+            "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1.2-1"}]}],
+        }
+        assert anyver.osv_affected("1.1-1", affected)
+        assert not anyver.osv_affected("1.2-1", affected)
+
+    def test_unknown_ecosystem_does_not_raise(self):
+        affected = {
+            "package": {"ecosystem": "GitHub Actions", "name": "demo"},
+            "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1.2.0"}]}],
+        }
+        assert anyver.osv_affected("1.0.0", affected)
+
+    def test_git_ranges_are_skipped(self):
+        """GIT ranges carry commit hashes, not versions."""
+        affected = {
+            "package": {"ecosystem": "npm", "name": "demo"},
+            "ranges": [
+                {
+                    "type": "GIT",
+                    "repo": "https://example.invalid/demo",
+                    "events": [{"introduced": "abc123def"}, {"fixed": "ff0011aa"}],
+                }
+            ],
+        }
+        assert not anyver.osv_affected("1.0.0", affected)
+
+    def test_git_range_falls_through_to_versions_list(self):
+        affected = {
+            "package": {"ecosystem": "npm", "name": "demo"},
+            "ranges": [{"type": "GIT", "events": [{"introduced": "abc123"}, {"fixed": "def456"}]}],
+            "versions": ["1.0.0"],
+        }
+        assert anyver.osv_affected("1.0.0", affected)
+        assert not anyver.osv_affected("2.0.0", affected)
+
+
 class TestRangeHardening:
     def test_empty_range_is_rejected(self):
         """A blank range must not silently match every version."""
