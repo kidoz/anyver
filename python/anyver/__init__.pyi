@@ -138,8 +138,23 @@ def build_purl(
     subpath: str | None = None,
 ) -> str: ...
 def purl_ecosystem(purl: str) -> str | None: ...
-def build_vers(ecosystem: str, range: str) -> str: ...
-def vers_contains(vers: str, version: str) -> bool: ...
+def build_vers(ecosystem: str, range: str) -> str:
+    """Build a canonical `vers:` range string.
+
+    The versioning scheme is the PURL type, so `pep440` and `pypi` both emit
+    `vers:pypi/...`. Constraints are joined with `|`; `,` and whitespace are
+    accepted on input. npm/cargo shorthand (`^1.2.3`, `~1.2`) is rejected —
+    VERS has no equivalent. Raises `ValueError` on an empty range; pass `*` to
+    match every version.
+    """
+
+def vers_contains(vers: str, version: str) -> bool:
+    """Test a version against a `vers:` range.
+
+    Constraints are a set, not a conjunction: `vers:npm/1.2.3|>=2.0.0|<5.0.0`
+    contains 1.2.3 as well as everything in `[2.0.0, 5.0.0)`.
+    """
+
 def osv_affected(version: str, affected: dict[str, Any], ecosystem: str | None = None) -> bool: ...
 
 # --- Version bumping ---

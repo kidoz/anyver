@@ -1370,7 +1370,7 @@ class TestSecurityInterop:
 
     def test_vers_contains(self):
         vers = anyver.build_vers("npm", ">=1.0.0,<2.0.0")
-        assert vers == "vers:npm/>=1.0.0,<2.0.0"
+        assert vers == "vers:npm/>=1.0.0|<2.0.0"
         assert anyver.vers_contains(vers, "1.5.0")
         assert not anyver.vers_contains(vers, "2.0.0")
 
@@ -1386,6 +1386,48 @@ class TestSecurityInterop:
         }
         assert anyver.osv_affected("1.1.0", affected)
         assert not anyver.osv_affected("1.2.0", affected)
+
+
+class TestVersSpec:
+    """VERS strings follow the PURL-spec grammar: `|`-separated constraints
+    evaluated as a set, and PURL type names as the versioning scheme."""
+
+    def test_pipe_separator(self):
+        vers = "vers:npm/>=2.0.0|<5.0.0"
+        assert not anyver.vers_contains(vers, "1.0.0")
+        assert anyver.vers_contains(vers, "2.0.0")
+        assert anyver.vers_contains(vers, "3.0.0")
+        assert not anyver.vers_contains(vers, "5.0.0")
+        assert not anyver.vers_contains(vers, "9.0.0")
+
+    def test_constraints_are_a_set_not_a_conjunction(self):
+        vers = "vers:npm/1.2.3|>=2.0.0|<5.0.0"
+        assert anyver.vers_contains(vers, "1.2.3")
+        assert not anyver.vers_contains(vers, "1.5.0")
+        assert anyver.vers_contains(vers, "3.0.0")
+
+    def test_pypi_scheme(self):
+        assert anyver.build_vers("pypi", ">=1.0|<2.0") == "vers:pypi/>=1.0|<2.0"
+        assert anyver.vers_contains("vers:pypi/>=1.0|<2.0", "1.5")
+        assert not anyver.vers_contains("vers:pypi/>=1.0|<2.0", "2.0")
+
+    def test_pep440_alias_emits_pypi_scheme(self):
+        assert anyver.build_vers("pep440", ">=1.0") == "vers:pypi/>=1.0"
+
+    def test_exclusion(self):
+        vers = "vers:npm/>=1.0.0|<5.0.0|!=2.0.0"
+        assert anyver.vers_contains(vers, "1.5.0")
+        assert not anyver.vers_contains(vers, "2.0.0")
+
+    def test_wildcard(self):
+        assert anyver.build_vers("npm", "*") == "vers:npm/*"
+        assert anyver.vers_contains("vers:npm/*", "0.0.1")
+
+    def test_empty_range_rejected(self):
+        with pytest.raises(ValueError):
+            anyver.build_vers("npm", "")
+        with pytest.raises(ValueError):
+            anyver.vers_contains("vers:npm/", "1.0.0")
 
 
 class TestRangeHardening:

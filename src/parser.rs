@@ -75,7 +75,7 @@ impl Ecosystem {
         match input.to_ascii_lowercase().as_str() {
             "generic" => Ok(Self::Generic),
             "semver" | "semver_strict" | "semver-strict" => Ok(Self::Semver),
-            "pep440" | "pep-440" | "python" => Ok(Self::Pep440),
+            "pep440" | "pep-440" | "python" | "pypi" => Ok(Self::Pep440),
             "debian" | "dpkg" | "deb" => Ok(Self::Debian),
             "rpm" | "redhat" => Ok(Self::Rpm),
             "ruby" | "gem" | "rubygems" => Ok(Self::Ruby),
@@ -141,6 +141,22 @@ impl Ecosystem {
             Self::Nix => "nix",
             Self::Homebrew => "homebrew",
             Self::Freebsd => "freebsd",
+        }
+    }
+
+    /// The VERS versioning-scheme name for this ecosystem. VERS reuses the
+    /// PURL *type*, which differs from our own name for six ecosystems (`pypi`
+    /// not `pep440`, `deb` not `debian`, …). Every value returned here is
+    /// accepted by [`Self::from_str`], so `vers:` strings round-trip.
+    pub(crate) fn vers_scheme(self) -> &'static str {
+        match self {
+            Self::Pep440 => "pypi",
+            Self::Debian => "deb",
+            Self::Ruby => "gem",
+            Self::Go => "golang",
+            Self::Crates => "cargo",
+            Self::Alpine => "apk",
+            other => other.as_str(),
         }
     }
 }

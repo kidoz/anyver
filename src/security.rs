@@ -1,7 +1,8 @@
 //! Security-interoperability helpers for PURL and VERS strings.
 
 use crate::parser::Ecosystem;
-use crate::ranges::RangeSet;
+use crate::strategies::{ParsedRepr, compare_for_ecosystem, parse_for_ecosystem};
+use std::cmp::Ordering;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Purl {
@@ -112,25 +113,187 @@ impl Purl {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VersOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl VersOp {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Eq => "",
+            Self::Ne => "!=",
+            Self::Lt => "<",
+            Self::Le => "<=",
+            Self::Gt => ">",
+            Self::Ge => ">=",
+        }
+    }
+
+    fn opens_upward(self) -> bool {
+        matches!(self, Self::Gt | Self::Ge)
+    }
+
+    fn opens_downward(self) -> bool {
+        matches!(self, Self::Lt | Self::Le)
+    }
+
+    fn is_inclusive(self) -> bool {
+        matches!(self, Self::Ge | Self::Le)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VersConstraint {
+    pub(crate) op: VersOp,
+    pub(crate) version: String,
+}
+
+/// A parsed `vers:` range, per the PURL-spec VERS grammar:
+/// `vers:<versioning-scheme>/<constraint>|<constraint>|…`.
+///
+/// Constraints are an *unordered set* evaluated by the spec's containment
+/// algorithm — not a conjunction. `vers:npm/1.2.3|>=2.0.0|<5.0.0` matches
+/// 1.2.3 as well as everything in [2.0.0, 5.0.0).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Vers {
     pub(crate) ecosystem: Ecosystem,
-    pub(crate) range: RangeSet,
+    /// Empty when the range is the `*` wildcard, which matches every version.
+    pub(crate) constraints: Vec<VersConstraint>,
+    pub(crate) any: bool,
+}
+
+fn parse_vers_constraint(token: &str) -> Result<VersConstraint, String> {
+    let (op, version) = if let Some(v) = token.strip_prefix(">=") {
+        (VersOp::Ge, v)
+    } else if let Some(v) = token.strip_prefix("<=") {
+        (VersOp::Le, v)
+    } else if let Some(v) = token.strip_prefix("!=") {
+        (VersOp::Ne, v)
+    } else if let Some(v) = token.strip_prefix('>') {
+        (VersOp::Gt, v)
+    } else if let Some(v) = token.strip_prefix('<') {
+        (VersOp::Lt, v)
+    } else if let Some(v) = token.strip_prefix('=') {
+        (VersOp::Eq, v)
+    } else {
+        // VERS makes the `=` comparator optional: a bare version is equality.
+        (VersOp::Eq, token)
+    };
+    let version = version.trim();
+    if version.is_empty() {
+        return Err(format!("missing version in VERS constraint '{token}'"));
+    }
+    Ok(VersConstraint { op, version: version.to_string() })
 }
 
 impl Vers {
-    pub(crate) fn parse(input: &str) -> Result<Self, String> {
-        let rest = input
-            .strip_prefix("vers:")
-            .ok_or_else(|| format!("invalid VERS '{input}'; expected 'vers:' prefix"))?;
-        let (scheme, range) = rest.split_once('/').ok_or_else(|| {
-            format!("invalid VERS '{input}'; expected 'vers:<ecosystem>/<range>'")
-        })?;
-        let ecosystem = Ecosystem::from_str(scheme)?;
-        Ok(Self { ecosystem, range: RangeSet::parse(range)? })
+    pub(crate) fn new(ecosystem: Ecosystem, spec: &str) -> Result<Self, String> {
+        let spec = spec.trim();
+        if spec.is_empty() {
+            return Err("empty VERS range; use '*' to match every version".to_string());
+        }
+        if spec == "*" {
+            return Ok(Self { ecosystem, constraints: Vec::new(), any: true });
+        }
+        // `|` is the spec separator. `,` and whitespace are accepted too so the
+        // comma-joined strings earlier anyver releases emitted still parse.
+        let constraints = spec
+            .split(['|', ','])
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(parse_vers_constraint)
+            .collect::<Result<Vec<_>, _>>()?;
+        if constraints.is_empty() {
+            return Err(format!("no constraints in VERS range '{spec}'"));
+        }
+        Ok(Self { ecosystem, constraints, any: false })
     }
 
+    pub(crate) fn parse(input: &str) -> Result<Self, String> {
+        let rest = input
+            .trim()
+            .strip_prefix("vers:")
+            .ok_or_else(|| format!("invalid VERS '{input}'; expected 'vers:' prefix"))?;
+        let (scheme, spec) = rest.split_once('/').ok_or_else(|| {
+            format!("invalid VERS '{input}'; expected 'vers:<versioning-scheme>/<constraints>'")
+        })?;
+        let ecosystem = Ecosystem::from_str(scheme.trim())?;
+        Self::new(ecosystem, spec)
+    }
+
+    /// Render back to a canonical `vers:` string.
+    pub(crate) fn to_vers(&self) -> String {
+        let scheme = self.ecosystem.vers_scheme();
+        if self.any {
+            return format!("vers:{scheme}/*");
+        }
+        let joined = self
+            .constraints
+            .iter()
+            .map(|c| format!("{}{}", c.op.as_str(), c.version))
+            .collect::<Vec<_>>()
+            .join("|");
+        format!("vers:{scheme}/{joined}")
+    }
+
+    /// The VERS containment algorithm. Equality and exclusion constraints are
+    /// resolved first, then the version is located within the *sorted* list of
+    /// ordering constraints: it is contained when the constraint below it opens
+    /// upward and the one above it opens downward.
     pub(crate) fn contains(&self, version: &str) -> Result<bool, String> {
-        self.range.contains(self.ecosystem, version)
+        if self.any {
+            return Ok(true);
+        }
+        let eco = self.ecosystem;
+        let target = parse_for_ecosystem(eco, version)?;
+        let cmp = |a: &ParsedRepr, b: &ParsedRepr| compare_for_ecosystem(eco, a, b);
+
+        let mut ordered: Vec<(ParsedRepr, VersOp)> = Vec::with_capacity(self.constraints.len());
+        for constraint in &self.constraints {
+            let parsed = parse_for_ecosystem(eco, &constraint.version)?;
+            match constraint.op {
+                // An exclusion the version hits wins outright, over every other
+                // constraint; an equality it hits does the same.
+                VersOp::Ne if cmp(&target, &parsed) == Ordering::Equal => return Ok(false),
+                VersOp::Eq if cmp(&target, &parsed) == Ordering::Equal => return Ok(true),
+                VersOp::Eq | VersOp::Ne => {}
+                op => ordered.push((parsed, op)),
+            }
+        }
+        if ordered.is_empty() {
+            return Ok(false);
+        }
+        ordered.sort_by(|a, b| cmp(&a.0, &b.0));
+
+        // Outside the constraint list on either end: contained only if the
+        // nearest constraint points that way.
+        let (first, last) = (&ordered[0], ordered.last().expect("ordered is non-empty"));
+        if cmp(&target, &first.0) == Ordering::Less {
+            return Ok(first.1.opens_downward());
+        }
+        if cmp(&target, &last.0) == Ordering::Greater {
+            return Ok(last.1.opens_upward());
+        }
+        // Landing exactly on a bound: contained iff that bound includes itself.
+        for (parsed, op) in &ordered {
+            if cmp(&target, parsed) == Ordering::Equal {
+                return Ok(op.is_inclusive());
+            }
+        }
+        // Strictly between two bounds.
+        for pair in ordered.windows(2) {
+            let (low, high) = (&pair[0], &pair[1]);
+            if cmp(&target, &low.0) == Ordering::Greater && cmp(&target, &high.0) == Ordering::Less
+            {
+                return Ok(low.1.opens_upward() && high.1.opens_downward());
+            }
+        }
+        Ok(false)
     }
 }

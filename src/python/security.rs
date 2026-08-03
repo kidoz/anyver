@@ -66,8 +66,8 @@ pub(crate) fn vers_contains(vers: &str, version: &str) -> PyResult<bool> {
 #[pyfunction(signature = (ecosystem, range))]
 pub(crate) fn build_vers(ecosystem: &str, range: &str) -> PyResult<String> {
     let eco = eco_from_str(ecosystem)?;
-    RangeSet::parse(range).map_err(PyValueError::new_err)?;
-    Ok(format!("vers:{}/{}", eco.as_str(), range.trim()))
+    let vers = Vers::new(eco, range).map_err(PyValueError::new_err)?;
+    Ok(vers.to_vers())
 }
 
 #[pyfunction(signature = (version, affected, ecosystem = None))]
