@@ -97,7 +97,13 @@ pub(crate) fn osv_affected(
                 continue;
             }
             let windows = RangeSet { branches };
-            if windows.contains(eco, version).map_err(PyValueError::new_err)? {
+            let range_eco = match range.get_item("type")? {
+                Some(kind) if kind.extract::<String>()?.eq_ignore_ascii_case("semver") => {
+                    Ecosystem::Semver
+                }
+                _ => eco,
+            };
+            if windows.contains_bounds(range_eco, version).map_err(PyValueError::new_err)? {
                 return Ok(true);
             }
         }

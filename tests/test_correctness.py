@@ -12,6 +12,35 @@ def sign(value):
     return (value > 0) - (value < 0)
 
 
+@pytest.mark.parametrize("package", ["PyPI", "npm", "unknown"])
+def test_osv_semver_uses_range_type(package):
+    affected = {
+        "package": {"ecosystem": package},
+        "ranges": [
+            {
+                "type": "SEMVER",
+                "events": [
+                    {"introduced": "1.0.0-alpha.1"},
+                    {"fixed": "1.0.0-alpha.beta"},
+                ],
+            }
+        ],
+    }
+    assert anyver.osv_affected("1.0.0-alpha.1", affected)
+    assert not anyver.osv_affected("1.0.0-alpha.beta", affected)
+    assert anyver.osv_affected("1.0.0-alpha.2", affected, ecosystem="pep440")
+
+
+def test_osv_npm_ecosystem_windows_do_not_apply_npm_admission():
+    affected = {
+        "package": {"ecosystem": "npm"},
+        "ranges": [
+            {"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "2.0.0"}]},
+        ],
+    }
+    assert anyver.osv_affected("1.1.0-alpha", affected)
+
+
 @pytest.mark.parametrize("value", ["1.2.3+", "1.2.3+foo..bar", "1.2.3+foo_bar", "1.2.3+foo+bar"])
 def test_semver_build_grammar(value):
     assert Version.try_parse(value, ecosystem="semver") is None
