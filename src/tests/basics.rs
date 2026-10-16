@@ -235,3 +235,12 @@ fn test_ruby_rc_lt_rel() {
 fn test_ruby_numeric() {
     assert_eq!(cmpg("3.2", "3.10"), Less);
 }
+
+#[test]
+fn test_generic_release_zeros_cannot_create_ordering_cycles() {
+    assert_eq!(cmpg("1.0-rc", "1-rc"), Equal);
+    assert_eq!(cmpg("1.0.0-rc", "1-rc"), Equal);
+    assert_eq!(cmpg("1.0-rc", "1"), Less);
+    assert_eq!(cmpg("1", "1-post"), Less);
+    assert_eq!(cmpg("1.0-rc", "1-post"), Less);
+}

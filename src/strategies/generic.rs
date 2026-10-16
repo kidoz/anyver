@@ -5,21 +5,51 @@
 //! `cmp_parsed` entry point.
 
 use crate::parser::{ParsedVersion, Seg, tag_weight};
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 pub(crate) fn normalized(segs: &[Seg]) -> &[Seg] {
-    // Strip trailing transparent tokens: Num(0) and release-alias tags
-    // (weight 30). This keeps trailing-zero equivalence (`1.0 == 1.0.0`)
-    // and treats Maven-style `1.0-final` / `1.0-ga` as equal to `1.0`.
     let mut end = segs.len();
-    while end > 0 {
-        match &segs[end - 1] {
-            Seg::Num(0) => end -= 1,
-            Seg::Text(t) if tag_weight(t) == Some(30) => end -= 1,
-            _ => break,
-        }
+    while end > 0
+        && (matches!(&segs[end - 1], Seg::Num(0))
+            || matches!(&segs[end - 1], Seg::Text(t) if tag_weight(t) == Some(30)))
+    {
+        end -= 1;
     }
     &segs[..end]
+}
+
+/// Canonical segments shared by generic comparison and portable keys.
+/// Common releases borrow their input rather than allocating a copy.
+pub(crate) fn canonical_segments(segs: &[Seg]) -> Cow<'_, [Seg]> {
+    let segs = normalized(segs);
+    let needs_copy = segs.iter().enumerate().any(|(i, seg)| {
+        matches!(seg, Seg::Text(t) if tag_weight(t) == Some(30))
+            || matches!(seg, Seg::Text(_)) && i > 0 && segs[i - 1] == Seg::Num(0)
+    });
+    if !needs_copy {
+        return Cow::Borrowed(segs);
+    }
+    let mut out = Vec::with_capacity(segs.len());
+    for seg in segs {
+        if let Seg::Text(tag) = seg {
+            // Release aliases are transparent, including within a suffix.
+            if tag_weight(tag) == Some(30) {
+                continue;
+            }
+            // An omitted numeric zero must have the same effect before a tag
+            // as at the end; otherwise release/prerelease/postrelease cycles
+            // are possible (1.0-rc > 1-post > 1 > 1.0-rc).
+            while out.last() == Some(&Seg::Num(0)) {
+                out.pop();
+            }
+        }
+        out.push(seg.clone());
+    }
+    while out.last() == Some(&Seg::Num(0)) {
+        out.pop();
+    }
+    Cow::Owned(out)
 }
 
 pub(crate) fn cmp_two(a: &Seg, b: &Seg) -> Ordering {
@@ -48,8 +78,8 @@ pub(crate) fn text_effective_weight(s: &str) -> i32 {
 pub(crate) fn cmp_segments(left: &[Seg], right: &[Seg]) -> Ordering {
     // Normalize: strip trailing Num(0) to ensure transitivity
     // (e.g., 1.0 == 1.0.0 and 1.0 < 1.0.post1 implies 1.0.0 < 1.0.post1)
-    let nl = normalized(left);
-    let nr = normalized(right);
+    let nl = canonical_segments(left);
+    let nr = canonical_segments(right);
     let n = nl.len().max(nr.len());
     for i in 0..n {
         match (nl.get(i), nr.get(i)) {
