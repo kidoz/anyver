@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 Correctness fixes for comparison, ranges, Python protocols, and security interop.
+Python 3.15 joins the supported matrix.
+
+### Added
+- Python 3.15 is tested in CI and declared in the PyPI classifiers. The
+  `abi3-py311` wheel already covers it; no new artifacts are published.
 
 ### Changed (breaking; requires a major release)
 - `Version` equality now requires matching ecosystems and another `Version`.
