@@ -147,6 +147,43 @@ def test_native_keys_fail_explicitly(eco):
         Version("1.0", ecosystem=eco).sort_key()
 
 
+@pytest.mark.parametrize("spec", ["^1.2.3-beta.1", "~1.2.3-beta.1"])
+def test_shorthand_preserves_prerelease(spec):
+    assert anyver.satisfies("1.2.3-beta.1", spec, ecosystem="npm")
+    assert anyver.satisfies("1.2.3-beta.2", spec, ecosystem="npm")
+    assert not anyver.satisfies("1.2.4-beta.1", spec, ecosystem="npm")
+
+
+def test_npm_prerelease_admission_is_per_branch():
+    assert not anyver.satisfies("1.1.0-alpha", ">=1.0.0", ecosystem="npm")
+    assert not anyver.satisfies("1.1.0-alpha", "*", ecosystem="npm")
+    assert anyver.satisfies("1.1.0-alpha", ">=1.1.0-alpha", ecosystem="npm")
+    assert not anyver.satisfies("1.1.0-alpha", ">=1.1.0 || <1.0.0-alpha", ecosystem="npm")
+
+
+@pytest.mark.parametrize("eco", ["terraform", "hex"])
+def test_pessimistic_upper_bound(eco):
+    assert anyver.satisfies("1.9.0", "~>1.2", ecosystem=eco)
+    assert not anyver.satisfies("2.0.0", "~>1.2", ecosystem=eco)
+    assert not anyver.satisfies("1.3.0", "~>1.2.3", ecosystem=eco)
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "18446744073709551615.x",
+        "1.18446744073709551615.x",
+        "<=18446744073709551615.x",
+        "^18446744073709551615.0.0",
+        "~1.18446744073709551615.0",
+        "^0.0.18446744073709551615",
+    ],
+)
+def test_range_overflow_raises(spec):
+    with pytest.raises(ValueError, match="exceeds u64"):
+        anyver.satisfies("1.2.3", spec)
+
+
 @pytest.mark.parametrize(
     "function,expected",
     [
@@ -166,6 +203,14 @@ def test_batch_compare_iterator_and_runtime_exports():
     assert anyver.VersionLike == Version | str
     v = Version("1.2.3-rc1")
     assert tuple(v.__iter__()) == v.segments()
+
+
+@pytest.mark.parametrize(
+    "spec,inside,outside", [("^0", "0.9.0", "1.0.0"), ("^0.0", "0.0.9", "0.1.0")]
+)
+def test_caret_partial_zero_precision(spec, inside, outside):
+    assert anyver.satisfies(inside, spec, ecosystem="npm")
+    assert not anyver.satisfies(outside, spec, ecosystem="npm")
 
 
 @pytest.mark.parametrize(

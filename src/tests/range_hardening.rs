@@ -107,3 +107,26 @@ fn test_bare_wildcard_range_unchanged() {
     assert!(contains("1.2.x", "1.2.5"));
     assert!(!contains("1.2.x", "1.3.0"));
 }
+
+#[test]
+fn test_range_increment_overflow_is_an_error() {
+    for input in [
+        "18446744073709551615.x",
+        "1.18446744073709551615.x",
+        "^18446744073709551615.0.0",
+        "~1.18446744073709551615.0",
+        "^0.0.18446744073709551615",
+    ] {
+        assert!(crate::ranges::RangeSet::parse(input).is_err(), "{input}");
+    }
+}
+
+#[test]
+fn test_npm_prerelease_lower_bound_and_admission() {
+    let range = crate::ranges::RangeSet::parse("^1.2.3-beta.1").unwrap();
+    assert!(range.contains(Ecosystem::Npm, "1.2.3-beta.1").unwrap());
+    assert!(!range.contains(Ecosystem::Npm, "1.2.4-beta.1").unwrap());
+    let range = crate::ranges::RangeSet::parse(">=1.0.0").unwrap();
+    assert!(!range.contains(Ecosystem::Npm, "1.1.0-alpha").unwrap());
+    assert!(range.contains_bounds(Ecosystem::Npm, "1.1.0-alpha").unwrap());
+}

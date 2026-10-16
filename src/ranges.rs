@@ -42,6 +42,15 @@ fn cmp_versions(ecosystem: Ecosystem, a: &str, b: &str) -> Result<Ordering, Stri
     Ok(compare_for_ecosystem(ecosystem, &pa, &pb))
 }
 
+fn increment(n: u64) -> Result<u64, String> {
+    n.checked_add(1).ok_or_else(|| "range upper bound exceeds u64".to_string())
+}
+
+fn lower_bound(rest: &str, major: u64, minor: u64, patch: u64) -> String {
+    let suffix = rest.find(['-', '+']).map_or("", |i| &rest[i..]);
+    format!("{major}.{minor}.{patch}{suffix}")
+}
+
 fn fmt_triple(major: u64, minor: u64, patch: u64) -> String {
     format!("{major}.{minor}.{patch}")
 }
@@ -53,15 +62,15 @@ fn parse_num_prefix(input: &str) -> Option<(Vec<u64>, usize)> {
     }
     let mut parts = Vec::with_capacity(3);
     let mut wildcard_at: Option<usize> = None;
-    for (i, raw) in s.split('.').enumerate() {
+    for (i, raw) in s.split(['-', '+']).next()?.split('.').enumerate() {
         if i >= 3 {
-            break;
+            return None;
         }
         if raw == "x" || raw == "X" || raw == "*" {
             wildcard_at = Some(i);
             break;
         }
-        let numeric: String = raw.chars().take_while(char::is_ascii_digit).collect();
+        let numeric = raw;
         if numeric.is_empty() {
             return None;
         }
@@ -121,8 +130,11 @@ fn expand_operator_wildcard(op: RangeOp, rest: &str) -> Result<Vec<Comparator>, 
     let major = *parts.first().unwrap_or(&0);
     let minor = *parts.get(1).unwrap_or(&0);
     let lower = fmt_triple(major, minor, 0);
-    let upper =
-        if depth == 1 { fmt_triple(major + 1, 0, 0) } else { fmt_triple(major, minor + 1, 0) };
+    let upper = if depth == 1 {
+        fmt_triple(increment(major)?, 0, 0)
+    } else {
+        fmt_triple(major, increment(minor)?, 0)
+    };
     Ok(match op {
         RangeOp::Ge | RangeOp::Lt => vec![Comparator { op, version: lower }],
         RangeOp::Gt => vec![Comparator { op: RangeOp::Ge, version: upper }],
@@ -143,15 +155,15 @@ fn expand_caret(rest: &str) -> Result<Vec<Comparator>, String> {
     let major = *parts.first().unwrap_or(&0);
     let minor = *parts.get(1).unwrap_or(&0);
     let patch = *parts.get(2).unwrap_or(&0);
-    let upper = if major > 0 {
-        fmt_triple(major + 1, 0, 0)
-    } else if minor > 0 {
-        fmt_triple(0, minor + 1, 0)
+    let upper = if major > 0 || parts.len() == 1 {
+        fmt_triple(increment(major)?, 0, 0)
+    } else if minor > 0 || parts.len() == 2 {
+        fmt_triple(0, increment(minor)?, 0)
     } else {
-        fmt_triple(0, 0, patch + 1)
+        fmt_triple(0, 0, increment(patch)?)
     };
     Ok(vec![
-        Comparator { op: RangeOp::Ge, version: fmt_triple(major, minor, patch) },
+        Comparator { op: RangeOp::Ge, version: lower_bound(rest, major, minor, patch) },
         Comparator { op: RangeOp::Lt, version: upper },
     ])
 }
@@ -163,12 +175,12 @@ fn expand_tilde(rest: &str) -> Result<Vec<Comparator>, String> {
     let minor = *parts.get(1).unwrap_or(&0);
     let patch = *parts.get(2).unwrap_or(&0);
     let upper = if parts.len() >= 2 {
-        fmt_triple(major, minor + 1, 0)
+        fmt_triple(major, increment(minor)?, 0)
     } else {
-        fmt_triple(major + 1, 0, 0)
+        fmt_triple(increment(major)?, 0, 0)
     };
     Ok(vec![
-        Comparator { op: RangeOp::Ge, version: fmt_triple(major, minor, patch) },
+        Comparator { op: RangeOp::Ge, version: lower_bound(rest, major, minor, patch) },
         Comparator { op: RangeOp::Lt, version: upper },
     ])
 }
@@ -183,8 +195,11 @@ fn expand_x_range(token: &str) -> Result<Vec<Comparator>, String> {
     let major = *parts.first().unwrap_or(&0);
     let minor = *parts.get(1).unwrap_or(&0);
     let lower = fmt_triple(major, minor, 0);
-    let upper =
-        if depth == 1 { fmt_triple(major + 1, 0, 0) } else { fmt_triple(major, minor + 1, 0) };
+    let upper = if depth == 1 {
+        fmt_triple(increment(major)?, 0, 0)
+    } else {
+        fmt_triple(major, increment(minor)?, 0)
+    };
     Ok(vec![
         Comparator { op: RangeOp::Ge, version: lower },
         Comparator { op: RangeOp::Lt, version: upper },
@@ -245,6 +260,15 @@ fn expand_token(token: &str) -> Result<Vec<Comparator>, String> {
         return expand_caret(rest);
     }
     if let Some(rest) = t.strip_prefix("~>") {
+        let (parts, _) = parse_num_prefix(rest).ok_or("invalid pessimistic range")?;
+        if parts.len() < 3 {
+            let major = *parts.first().ok_or("missing pessimistic version")?;
+            let minor = *parts.get(1).unwrap_or(&0);
+            return Ok(vec![
+                Comparator { op: RangeOp::Ge, version: lower_bound(rest, major, minor, 0) },
+                Comparator { op: RangeOp::Lt, version: fmt_triple(increment(major)?, 0, 0) },
+            ]);
+        }
         return expand_tilde(rest);
     }
     if let Some(rest) = t.strip_prefix("~=") {
@@ -337,24 +361,44 @@ impl RangeSet {
     }
 
     pub(crate) fn contains(&self, ecosystem: Ecosystem, version: &str) -> Result<bool, String> {
+        let target = parse_for_ecosystem(ecosystem, version)?;
         for branch in &self.branches {
-            let mut ok = true;
-            for clause in branch {
-                let ord = cmp_versions(ecosystem, version, &clause.version)?;
-                let matched = match clause.op {
-                    RangeOp::Gt => ord == Ordering::Greater,
-                    RangeOp::Ge => ord != Ordering::Less,
-                    RangeOp::Lt => ord == Ordering::Less,
-                    RangeOp::Le => ord != Ordering::Greater,
-                    RangeOp::Eq => ord == Ordering::Equal,
-                    RangeOp::Ne => ord != Ordering::Equal,
-                };
-                if !matched {
-                    ok = false;
-                    break;
+            if ecosystem == Ecosystem::Npm
+                && let crate::strategies::ParsedRepr::Semver(target) = &target
+                && target.pre.is_some()
+            {
+                let mut admitted = false;
+                for clause in branch {
+                    if clause.op != RangeOp::Ne
+                        && let crate::strategies::ParsedRepr::Semver(bound) =
+                            parse_for_ecosystem(ecosystem, &clause.version)?
+                        && bound.pre.is_some()
+                        && (target.major, target.minor, target.patch)
+                            == (bound.major, bound.minor, bound.patch)
+                    {
+                        admitted = true;
+                    }
+                }
+                if !admitted {
+                    continue;
                 }
             }
-            if ok {
+            if branch_contains(ecosystem, version, branch)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Raw interval containment, without package-manager prerelease admission.
+    /// OSV event windows use version ordering directly, even for npm records.
+    pub(crate) fn contains_bounds(
+        &self,
+        ecosystem: Ecosystem,
+        version: &str,
+    ) -> Result<bool, String> {
+        for branch in &self.branches {
+            if branch_contains(ecosystem, version, branch)? {
                 return Ok(true);
             }
         }
@@ -371,6 +415,28 @@ impl RangeSet {
         }
         Ok(false)
     }
+}
+
+fn branch_contains(
+    ecosystem: Ecosystem,
+    version: &str,
+    branch: &[Comparator],
+) -> Result<bool, String> {
+    for clause in branch {
+        let ord = cmp_versions(ecosystem, version, &clause.version)?;
+        let matched = match clause.op {
+            RangeOp::Gt => ord == Ordering::Greater,
+            RangeOp::Ge => ord != Ordering::Less,
+            RangeOp::Lt => ord == Ordering::Less,
+            RangeOp::Le => ord != Ordering::Greater,
+            RangeOp::Eq => ord == Ordering::Equal,
+            RangeOp::Ne => ord != Ordering::Equal,
+        };
+        if !matched {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Collapse a branch's clauses (which are `AND`ed) into one interval. Repeated
