@@ -12,6 +12,17 @@ def sign(value):
     return (value > 0) - (value < 0)
 
 
+@pytest.mark.parametrize("value", ["1.2.3+", "1.2.3+foo..bar", "1.2.3+foo_bar", "1.2.3+foo+bar"])
+def test_semver_build_grammar(value):
+    assert Version.try_parse(value, ecosystem="semver") is None
+    with pytest.raises(ValueError):
+        anyver.compare_semver_strict(value, "1.2.3")
+
+
+def test_semver_valid_build_ignored():
+    assert anyver.compare_semver_strict("1.2.3+001.foo-bar", "1.2.3") == 0
+
+
 @pytest.mark.parametrize(
     "value", ["1..0", "1.0+", "1!2!3", "1..a1", "1.0a..1", "1.0+abc..1", "1.0wat", "1.0.post1rc1"]
 )

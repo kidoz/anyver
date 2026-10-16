@@ -277,3 +277,11 @@ fn test_ecosystem_dispatch_generic_vs_semver() {
 fn test_ecosystem_dispatch_invalid_name() {
     assert!(compare_str_with_ecosystem("1.0.0", "2.0.0", "invalid").is_err());
 }
+
+#[test]
+fn test_strict_semver_build_metadata_validation() {
+    for input in ["1.2.3+", "1.2.3+foo..bar", "1.2.3+foo_bar", "1.2.3+foo+bar"] {
+        assert!(parse_semver_strict(input).is_err(), "{input}");
+    }
+    assert!(parse_semver_strict("1.2.3+001.foo-bar").is_ok());
+}

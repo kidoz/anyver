@@ -47,7 +47,15 @@ pub(crate) fn validate_prerelease(pre: &str) -> Result<(), String> {
 pub(crate) fn parse_semver_strict(input: &str) -> Result<SemVer, String> {
     let s = strip_v(input.trim());
     let s = match s.find('+') {
-        Some(p) => &s[..p],
+        Some(p) => {
+            let build = &s[p + 1..];
+            if build.split('.').any(|ident| {
+                ident.is_empty() || !ident.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            }) {
+                return Err(format!("invalid SemVer build metadata: '{build}'"));
+            }
+            &s[..p]
+        }
         None => s,
     };
     let (core, pre) = match s.find('-') {
