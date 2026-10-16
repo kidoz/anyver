@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install 'ruff>=0.8'
+      - run: pip install 'ruff>=0.17.1'
       - run: ruff check python tests
       - run: ruff format --check python tests
 
@@ -49,6 +49,6 @@ jobs:
       - run: python -m venv .venv
       - run: |
           source .venv/bin/activate
-          pip install maturin pytest
+          pip install 'maturin>=1.15,<2.0' 'pytest>=9.1.1'
           maturin develop --release
           pytest tests/test_anyver.py -v
