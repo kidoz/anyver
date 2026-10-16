@@ -210,6 +210,14 @@ fn parse_vers_constraint(token: &str) -> Result<VersConstraint, String> {
     if version.is_empty() {
         return Err(format!("missing version in VERS constraint '{token}'"));
     }
+    if version.starts_with(['^', '~', '=', '>', '<', '!'])
+        || version
+            .split(['-', '+'])
+            .next()
+            .is_some_and(|core| core.split('.').any(|p| matches!(p, "x" | "X" | "*")))
+    {
+        return Err(format!("shorthand is not supported in VERS: '{token}'"));
+    }
     Ok(VersConstraint { op, version: version.to_string() })
 }
 
@@ -225,11 +233,14 @@ impl Vers {
         // `|` is the spec separator. `,` and whitespace are accepted too so the
         // comma-joined strings earlier anyver releases emitted still parse.
         let constraints = spec
-            .split(['|', ','])
+            .split(|c: char| c == '|' || c == ',' || c.is_whitespace())
             .map(str::trim)
             .filter(|token| !token.is_empty())
             .map(parse_vers_constraint)
             .collect::<Result<Vec<_>, _>>()?;
+        for constraint in &constraints {
+            parse_for_ecosystem(ecosystem, &constraint.version)?;
+        }
         if constraints.is_empty() {
             return Err(format!("no constraints in VERS range '{spec}'"));
         }
@@ -276,45 +287,49 @@ impl Vers {
         let cmp = |a: &ParsedRepr, b: &ParsedRepr| compare_for_ecosystem(eco, a, b);
 
         let mut ordered: Vec<(ParsedRepr, VersOp)> = Vec::with_capacity(self.constraints.len());
+        let mut equal = false;
+        let mut excluded = false;
         for constraint in &self.constraints {
             let parsed = parse_for_ecosystem(eco, &constraint.version)?;
+            let matches = cmp(&target, &parsed) == Ordering::Equal;
             match constraint.op {
-                // An exclusion the version hits wins outright, over every other
-                // constraint; an equality it hits does the same.
-                VersOp::Ne if cmp(&target, &parsed) == Ordering::Equal => return Ok(false),
-                VersOp::Eq if cmp(&target, &parsed) == Ordering::Equal => return Ok(true),
-                VersOp::Eq | VersOp::Ne => {}
+                VersOp::Ne => excluded |= matches,
+                VersOp::Eq => equal |= matches,
                 op => ordered.push((parsed, op)),
             }
+        }
+        if excluded {
+            return Ok(false);
+        }
+        if equal {
+            return Ok(true);
         }
         if ordered.is_empty() {
             return Ok(false);
         }
         ordered.sort_by(|a, b| cmp(&a.0, &b.0));
 
-        // Outside the constraint list on either end: contained only if the
-        // nearest constraint points that way.
-        let (first, last) = (&ordered[0], ordered.last().expect("ordered is non-empty"));
-        if cmp(&target, &first.0) == Ordering::Less {
-            return Ok(first.1.opens_downward());
-        }
-        if cmp(&target, &last.0) == Ordering::Greater {
-            return Ok(last.1.opens_upward());
-        }
-        // Landing exactly on a bound: contained iff that bound includes itself.
-        for (parsed, op) in &ordered {
-            if cmp(&target, parsed) == Ordering::Equal {
-                return Ok(op.is_inclusive());
-            }
-        }
-        // Strictly between two bounds.
-        for pair in ordered.windows(2) {
-            let (low, high) = (&pair[0], &pair[1]);
-            if cmp(&target, &low.0) == Ordering::Greater && cmp(&target, &high.0) == Ordering::Less
+        // Combine equal bounds before evaluating the neighbouring intervals.
+        let mut groups: Vec<(ParsedRepr, bool, bool, bool)> = Vec::new();
+        for (parsed, op) in ordered {
+            if let Some(last) = groups.last_mut()
+                && cmp(&last.0, &parsed) == Ordering::Equal
             {
-                return Ok(low.1.opens_upward() && high.1.opens_downward());
+                last.1 |= op.opens_downward();
+                last.2 |= op.opens_upward();
+                last.3 |= op.is_inclusive();
+            } else {
+                groups.push((parsed, op.opens_downward(), op.opens_upward(), op.is_inclusive()));
             }
         }
-        Ok(false)
+        let mut below = None;
+        for (parsed, down, up, inclusive) in groups {
+            match cmp(&target, &parsed) {
+                Ordering::Equal => return Ok(inclusive),
+                Ordering::Less => return Ok(below.unwrap_or(true) && down),
+                Ordering::Greater => below = Some(up),
+            }
+        }
+        Ok(below.unwrap_or(false))
     }
 }

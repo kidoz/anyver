@@ -41,6 +41,41 @@ def test_osv_npm_ecosystem_windows_do_not_apply_npm_admission():
     assert anyver.osv_affected("1.1.0-alpha", affected)
 
 
+@pytest.mark.parametrize(
+    "constraints,expected",
+    [
+        (["<2.0.0", ">=2.0.0"], True),
+        (["2.0.0", "!=2.0.0"], False),
+        (["<2.0.0", ">2.0.0"], False),
+        (["<=2.0.0", ">2.0.0"], True),
+        (["2.0.0", ">=2.0.0", "!=2.0.0"], False),
+    ],
+)
+def test_vers_constraints_are_unordered(constraints, expected):
+    for order in permutations(constraints):
+        assert anyver.vers_contains("vers:npm/" + "|".join(order), "2.0.0") is expected
+
+
+def test_vers_duplicate_bound_directions_apply_between_bounds():
+    constraints = ["<1.0.0", ">=1.0.0", "<3.0.0", ">=3.0.0"]
+    for order in permutations(constraints):
+        assert anyver.vers_contains("vers:npm/" + "|".join(order), "2.0.0")
+
+
+@pytest.mark.parametrize("spec", [">=1.0.0 <2.0.0", ">=1.0.0,<2.0.0", ">=1.0.0|<2.0.0"])
+def test_build_vers_round_trip(spec):
+    built = anyver.build_vers("npm", spec)
+    assert built == "vers:npm/>=1.0.0|<2.0.0"
+    assert anyver.vers_contains(built, "1.5.0")
+    assert not anyver.vers_contains(built, "2.0.0")
+
+
+@pytest.mark.parametrize("spec", ["^1.2.3", "~1.2", "1.2.x", ">=1.2.x", "1.2.*"])
+def test_build_vers_rejects_shorthand(spec):
+    with pytest.raises(ValueError):
+        anyver.build_vers("npm", spec)
+
+
 @pytest.mark.parametrize("value", ["1.2.3+", "1.2.3+foo..bar", "1.2.3+foo_bar", "1.2.3+foo+bar"])
 def test_semver_build_grammar(value):
     assert Version.try_parse(value, ecosystem="semver") is None
@@ -240,6 +275,11 @@ def test_batch_compare_iterator_and_runtime_exports():
 def test_caret_partial_zero_precision(spec, inside, outside):
     assert anyver.satisfies(inside, spec, ecosystem="npm")
     assert not anyver.satisfies(outside, spec, ecosystem="npm")
+
+
+def test_vers_accepts_x_as_prerelease_identifier():
+    built = anyver.build_vers("npm", ">=1.2.3-alpha.x")
+    assert anyver.vers_contains(built, "1.2.3-alpha.x")
 
 
 @pytest.mark.parametrize(
