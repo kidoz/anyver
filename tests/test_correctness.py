@@ -145,3 +145,44 @@ def test_sort_keys_match_all_pairwise_comparisons(eco, values):
 def test_native_keys_fail_explicitly(eco):
     with pytest.raises(ValueError, match="sort_versions"):
         Version("1.0", ecosystem=eco).sort_key()
+
+
+@pytest.mark.parametrize(
+    "function,expected",
+    [
+        (anyver.sort_versions, ["1.0", "2.0"]),
+        (anyver.min_version, "1.0"),
+        (anyver.max_version, "2.0"),
+        (anyver.stable_versions, ["2.0", "1.0"]),
+        (anyver.latest_stable, "2.0"),
+    ],
+)
+def test_iterable_inputs(function, expected):
+    assert function(v for v in ["2.0", "1.0"]) == expected
+
+
+def test_batch_compare_iterator_and_runtime_exports():
+    assert anyver.batch_compare(pair for pair in [("1", "2"), ("2", "1")]) == [-1, 1]
+    assert anyver.VersionLike == Version | str
+    v = Version("1.2.3-rc1")
+    assert tuple(v.__iter__()) == v.segments()
+
+
+@pytest.mark.parametrize(
+    "function",
+    [
+        anyver.sort_versions,
+        anyver.batch_compare,
+        anyver.min_version,
+        anyver.max_version,
+        anyver.stable_versions,
+        anyver.latest_stable,
+    ],
+)
+def test_iterator_errors_are_preserved(function):
+    def broken():
+        raise RuntimeError("iterator failed")
+        yield  # pragma: no cover
+
+    with pytest.raises(RuntimeError, match="iterator failed"):
+        function(broken())

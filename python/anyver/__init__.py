@@ -35,6 +35,8 @@ from ._anyver import (
     version,
 )
 
+VersionLike = Version | str
+
 try:
     from importlib.metadata import version as _pkg_version
 
@@ -44,6 +46,7 @@ except Exception:
 
 __all__ = [
     "Version",
+    "VersionLike",
     "__version__",
     "batch_compare",
     "build_purl",

@@ -61,9 +61,10 @@ pub(crate) fn compare(
 #[pyfunction(signature = (versions, ecosystem = "generic"))]
 pub(crate) fn sort_versions<'py>(
     _py: Python<'py>,
-    versions: Vec<Bound<'py, PyAny>>,
+    versions: &Bound<'py, PyAny>,
     ecosystem: &str,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let versions = versions.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     let eco = resolve_eco(ecosystem, versions.first())?;
     let mut pairs: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
         .into_iter()
@@ -77,10 +78,11 @@ pub(crate) fn sort_versions<'py>(
 }
 
 #[pyfunction(signature = (pairs, ecosystem = "generic"))]
-pub(crate) fn batch_compare(
-    pairs: Vec<(Bound<'_, PyAny>, Bound<'_, PyAny>)>,
-    ecosystem: &str,
-) -> PyResult<Vec<i32>> {
+pub(crate) fn batch_compare(pairs: &Bound<'_, PyAny>, ecosystem: &str) -> PyResult<Vec<i32>> {
+    let pairs = pairs
+        .try_iter()?
+        .map(|pair| pair?.extract::<(Bound<'_, PyAny>, Bound<'_, PyAny>)>())
+        .collect::<PyResult<Vec<_>>>()?;
     let is_auto = ecosystem.eq_ignore_ascii_case("auto");
     let base_eco = if is_auto { Ecosystem::Generic } else { eco_from_str(ecosystem)? };
 
@@ -136,9 +138,10 @@ pub(crate) fn lte(a: &str, b: &str, ecosystem: &str) -> PyResult<bool> {
 
 #[pyfunction(signature = (versions, ecosystem = "generic"))]
 pub(crate) fn max_version<'py>(
-    versions: Vec<Bound<'py, PyAny>>,
+    versions: &Bound<'py, PyAny>,
     ecosystem: &str,
 ) -> PyResult<Bound<'py, PyAny>> {
+    let versions = versions.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     if versions.is_empty() {
         return Err(PyValueError::new_err("empty sequence"));
     }
@@ -159,9 +162,10 @@ pub(crate) fn max_version<'py>(
 
 #[pyfunction(signature = (versions, ecosystem = "generic"))]
 pub(crate) fn min_version<'py>(
-    versions: Vec<Bound<'py, PyAny>>,
+    versions: &Bound<'py, PyAny>,
     ecosystem: &str,
 ) -> PyResult<Bound<'py, PyAny>> {
+    let versions = versions.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     if versions.is_empty() {
         return Err(PyValueError::new_err("empty sequence"));
     }

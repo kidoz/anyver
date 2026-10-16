@@ -167,6 +167,10 @@ impl PyVersion {
         Ok(hasher.finish())
     }
 
+    fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.segments(py)?.call_method0("__iter__")
+    }
+
     #[getter]
     fn raw(&self) -> &str {
         &self.inner.raw

@@ -23,9 +23,10 @@ fn is_prerelease_obj(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
 #[pyfunction(signature = (versions, ecosystem = "generic"))]
 pub(crate) fn stable_versions<'py>(
     _py: Python<'py>,
-    versions: Vec<Bound<'py, PyAny>>,
+    versions: &Bound<'py, PyAny>,
     ecosystem: &str,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let versions = versions.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     let eco = resolve_eco(ecosystem, versions.first())?;
     versions
         .into_iter()
@@ -48,9 +49,10 @@ pub(crate) fn stable_versions<'py>(
 
 #[pyfunction(signature = (versions, ecosystem = "generic"))]
 pub(crate) fn latest_stable<'py>(
-    versions: Vec<Bound<'py, PyAny>>,
+    versions: &Bound<'py, PyAny>,
     ecosystem: &str,
 ) -> PyResult<Bound<'py, PyAny>> {
+    let versions = versions.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     if versions.is_empty() {
         return Err(PyValueError::new_err("empty sequence"));
     }
