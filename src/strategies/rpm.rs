@@ -12,6 +12,40 @@ pub(crate) struct RpmVersion {
     release: String,
 }
 
+impl RpmVersion {
+    pub(crate) fn hash_key(&self) -> (u64, Vec<String>, Vec<String>) {
+        fn tokens(s: &str) -> Vec<String> {
+            let mut rest = s.as_bytes();
+            let mut out = Vec::new();
+            while let Some(&first) = rest.first() {
+                if matches!(first, b'~' | b'^') {
+                    out.push(char::from(first).to_string());
+                    rest = &rest[1..];
+                } else if first.is_ascii_alphanumeric() {
+                    let numeric = first.is_ascii_digit();
+                    let len = rest
+                        .iter()
+                        .take_while(|b| {
+                            if numeric { b.is_ascii_digit() } else { b.is_ascii_alphabetic() }
+                        })
+                        .count();
+                    let text = String::from_utf8_lossy(&rest[..len]);
+                    out.push(if numeric {
+                        format!("n{}", text.trim_start_matches('0'))
+                    } else {
+                        format!("s{text}")
+                    });
+                    rest = &rest[len..];
+                } else {
+                    rest = &rest[1..];
+                }
+            }
+            out
+        }
+        (self.epoch, tokens(&self.version), tokens(&self.release))
+    }
+}
+
 pub(crate) fn parse_rpm(input: &str) -> Result<RpmVersion, String> {
     let s = input.trim();
     if s.is_empty() {

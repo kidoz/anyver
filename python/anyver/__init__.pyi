@@ -11,9 +11,10 @@ VersionLike = Union["Version", str]
 class Version:
     """A parsed, comparable version string.
 
-    Equality and ordering strip trailing numeric zeros (so `1.0 == 1.0.0`)
-    and ignore build metadata (`1.0+a == 1.0+b`). Hashable; usable in sets
-    and as dict keys.
+    Equality requires another Version with the same ecosystem and follows
+    that ecosystem's comparator. Strings and other ecosystems are unequal;
+    use compare() for explicit version comparison. Hashable in sets and dicts.
+    Ordering Version objects from different ecosystems raises TypeError.
     """
 
     def __init__(self, version: str, ecosystem: str = "auto") -> None: ...
@@ -25,7 +26,10 @@ class Version:
         a non-generic ecosystem."""
     @staticmethod
     def try_parse(version: str, ecosystem: str = "auto") -> Version | None:
-        """Parse, returning None if invalid."""
+        """Parse, returning None if invalid under the selected ecosystem.
+
+        Generic parsing and auto's generic fallback remain permissive.
+        """
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Version:
         """Reconstruct from the dict produced by `to_dict()`."""
@@ -80,7 +84,10 @@ class Version:
         """Structured representation including `raw`, `ecosystem`, `epoch`,
         `major`/`minor`/`patch`, `build`, and release-type flags."""
     def sort_key(self) -> tuple[tuple[int, int, str], ...]:
-        """Database-friendly tuple sort key isomorphic to `anyver.compare`."""
+        """Tuple key matching comparison within one ecosystem.
+
+        Raises ValueError for native Debian, RPM, and Maven comparators.
+        """
 
 # --- Module-level functions ---
 

@@ -12,6 +12,35 @@ pub(crate) struct DebianVersion {
     revision: String,
 }
 
+impl DebianVersion {
+    pub(crate) fn hash_key(&self) -> (u64, String, String) {
+        fn canonical(s: &str) -> String {
+            let mut out = String::new();
+            let mut chars = s.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c.is_ascii_digit() {
+                    let mut digits = String::from(c);
+                    while chars.peek().is_some_and(char::is_ascii_digit) {
+                        if let Some(c) = chars.next() {
+                            digits.push(c);
+                        }
+                    }
+                    let digits = digits.trim_start_matches('0');
+                    if !digits.is_empty() {
+                        out.push('#');
+                        out.push_str(digits);
+                        out.push('#');
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        }
+        (self.epoch, canonical(&self.upstream), canonical(&self.revision))
+    }
+}
+
 pub(crate) fn extract_epoch_colon(s: &str) -> (u64, &str) {
     for (i, ch) in s.char_indices() {
         if ch == ':' {

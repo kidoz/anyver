@@ -3,97 +3,58 @@
 //! round-tripping, and the `sort_key` encoding.
 
 use pyo3::basic::CompareOp;
-use pyo3::exceptions::{PyIndexError, PyValueError};
+use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 use std::cmp::Ordering;
 
 use crate::parser::{Ecosystem, ParsedVersion, Seg, autodetect_ecosystem, parse, tag_weight};
 use crate::strategies::{
-    ParsedRepr, cmp_parsed, compare_for_ecosystem, normalized, parse_for_ecosystem,
+    ParsedRepr, canonical_segments, compare_for_ecosystem, parse_for_ecosystem,
 };
 
 use super::conv::{SegToPy, eco_from_str, extract_parsed_for_ecosystem};
 
-/// Compare two `PyVersion` values using the shared ecosystem if both match,
-/// otherwise fall back to generic comparison. Uses pre-parsed repr — no re-parsing.
-fn richcmp_ord(a: &PyVersion, b: &PyVersion) -> Ordering {
-    if a.eco == b.eco {
-        compare_for_ecosystem(a.eco, &a.repr, &b.repr)
-    } else {
-        cmp_parsed(&a.inner, &b.inner)
-    }
-}
-
-/// A single `(rank, value, text)` element of a `sort_key()` tuple.
-fn key_tuple<'py>(py: Python<'py>, a: i64, b: i64, c: &str) -> PyResult<Bound<'py, PyAny>> {
-    Ok(PyTuple::new(
-        py,
-        vec![
-            a.into_pyobject(py)?.into_any(),
-            b.into_pyobject(py)?.into_any(),
-            c.into_pyobject(py)?.into_any(),
-        ],
-    )?
-    .into_any())
-}
-
-/// Split a segment list into the numeric prefix and the tag suffix, dropping
-/// the segments both `cmp_segments` and `__hash__` treat as transparent:
-/// trailing `Num(0)` (via `normalized`) and the zeros sitting just before the
-/// first tag. Shared by `sort_key()` and `__hash__` so the two never disagree.
-fn canonical_parts(raw_segs: &[Seg]) -> (&[Seg], &[Seg]) {
-    let segs = normalized(raw_segs);
-    match segs.iter().position(|s| matches!(s, Seg::Text(_))) {
-        Some(pos) => {
-            let mut end = pos;
-            while end > 0 {
-                if let Seg::Num(0) = segs[end - 1] {
-                    end -= 1;
-                } else {
-                    break;
+/// Tuple encoding shared by the portable sort key and Python hashing.
+fn version_key(version: &PyVersion) -> PyResult<Vec<(i32, u64, String)>> {
+    match &version.repr {
+        ParsedRepr::Pep440(p) => Ok(p.key().to_vec()),
+        ParsedRepr::Semver(v) => {
+            let mut key = vec![
+                (2, v.major, String::new()),
+                (2, v.minor, String::new()),
+                (2, v.patch, String::new()),
+            ];
+            key.push((i32::from(v.pre.is_none()), 0, String::new()));
+            if let Some(pre) = &v.pre {
+                for part in pre.split('.') {
+                    key.push(match part.parse::<u64>() {
+                        Ok(n) => (0, n, String::new()),
+                        Err(_) => (1, 0, part.to_string()),
+                    });
                 }
             }
-            (&segs[..end], &segs[pos..])
+            Ok(key)
         }
-        None => (segs, &[][..]),
+        ParsedRepr::Generic(p) => {
+            let mut key = vec![(2, p.epoch, String::new())];
+            for seg in canonical_segments(&p.segments).iter() {
+                key.push(match seg {
+                    Seg::Num(n) => (100, *n, String::new()),
+                    Seg::Text(s) => (
+                        tag_weight(s).unwrap_or(29),
+                        0,
+                        if tag_weight(s).is_some() { String::new() } else { s.clone() },
+                    ),
+                });
+            }
+            key.push((30, 0, String::new()));
+            Ok(key)
+        }
+        _ => Err(PyValueError::new_err(
+            "sort_key is unavailable for native Debian, RPM, and Maven ordering; use sort_versions",
+        )),
     }
-}
-
-/// Encode a segment list into `sort_key()` tuples isomorphic with
-/// `cmp_segments`: emit `(2, n, "")` for numbers and `(1, weight, text)` for
-/// tags (numbers outrank tags), then a trailing `(1, 30, "")` release-boundary
-/// sentinel so a bare release sorts above any pre-release tag and below any
-/// post-release tag.
-fn encode_segments<'py>(py: Python<'py>, raw_segs: &[Seg]) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let sat = |n: u64| -> i64 { i64::try_from(n).unwrap_or(i64::MAX) };
-    let (prefix, suffix) = canonical_parts(raw_segs);
-    let mut out: Vec<Bound<'py, PyAny>> = Vec::with_capacity(prefix.len() + suffix.len() + 1);
-    for seg in prefix.iter().chain(suffix.iter()) {
-        out.push(match seg {
-            Seg::Num(n) => key_tuple(py, 2, sat(*n), "")?,
-            Seg::Text(s) => key_tuple(py, 1, i64::from(tag_weight(s).unwrap_or(29)), s)?,
-        });
-    }
-    out.push(key_tuple(py, 1, 30, "")?);
-    Ok(out)
-}
-
-fn encode_local_segments<'py>(
-    py: Python<'py>,
-    raw_segs: &[Seg],
-) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let sat = |n: u64| -> i64 { i64::try_from(n).unwrap_or(i64::MAX) };
-    let segs = normalized(raw_segs);
-    let mut out: Vec<Bound<'py, PyAny>> = Vec::with_capacity(segs.len() + 1);
-    for seg in segs {
-        out.push(match seg {
-            Seg::Num(n) => key_tuple(py, 2, sat(*n), "")?,
-            Seg::Text(s) => key_tuple(py, 1, 29, s)?,
-        });
-    }
-    out.push(key_tuple(py, 1, 30, "")?);
-    Ok(out)
 }
 
 #[pyclass(name = "Version", module = "anyver", from_py_object)]
@@ -131,27 +92,25 @@ impl PyVersion {
         other: &Bound<'py, PyAny>,
         op: CompareOp,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let equality = matches!(op, CompareOp::Eq | CompareOp::Ne);
         let ord = if let Ok(v) = other.extract::<PyRef<PyVersion>>() {
-            richcmp_ord(self, &v)
-        } else if let Ok(s) = other.extract::<String>() {
-            // Parse the str with this Version's ecosystem, so the left-hand
-            // side's declared ecosystem wins — matching Version.compare(str).
-            match parse_for_ecosystem(self.eco, &s) {
-                Ok(parsed) => compare_for_ecosystem(self.eco, &self.repr, &parsed),
-                // `==`/`!=` have to answer rather than raise: a string that
-                // isn't a valid version for this ecosystem simply isn't equal
-                // to it. Raising here breaks `in`, dict lookups and
-                // `assertEqual`, which all assume `__eq__` is total. Ordering
-                // against an unparseable string stays an error.
-                Err(e) => {
-                    let answer = match op {
-                        CompareOp::Eq => false,
-                        CompareOp::Ne => true,
-                        _ => return Err(PyValueError::new_err(e)),
-                    };
-                    return Ok(answer.into_pyobject(py)?.to_owned().into_any());
+            if self.eco != v.eco {
+                if equality {
+                    return Ok(matches!(op, CompareOp::Ne)
+                        .into_pyobject(py)?
+                        .to_owned()
+                        .into_any());
                 }
+                return Err(PyTypeError::new_err(
+                    "ordering requires matching ecosystems; use compare()",
+                ));
             }
+            compare_for_ecosystem(self.eco, &self.repr, &v.repr)
+        } else if equality {
+            return Ok(py.NotImplemented().into_bound(py));
+        } else if let Ok(s) = other.extract::<String>() {
+            let parsed = parse_for_ecosystem(self.eco, &s).map_err(PyValueError::new_err)?;
+            compare_for_ecosystem(self.eco, &self.repr, &parsed)
         } else {
             return Ok(py.NotImplemented().into_bound(py));
         };
@@ -194,53 +153,18 @@ impl PyVersion {
         !self.inner.segments.is_empty()
     }
 
-    fn __hash__(&self) -> u64 {
+    fn __hash__(&self) -> PyResult<u64> {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
-        // Hash the generic view, not the ecosystem one, because cross-ecosystem
-        // `==` falls back to generic comparison — so `a == b → hash(a) ==
-        // hash(b)` needs the generic segments on both sides.
-        //
-        // Maven is the exception: it equates versions the raw generic parse
-        // keeps apart (`1.0-1 == 1.0.0-1`), so its *canonical* form is hashed
-        // instead. That form re-parses to the same generic segments a plain
-        // release would produce, so the cross-ecosystem case still agrees.
-        let canonical;
-        let parsed = match &self.repr {
-            ParsedRepr::Maven(m) => {
-                canonical = parse(&m.canonical());
-                &canonical
-            }
-            _ => &self.inner,
-        };
-        parsed.epoch.hash(&mut hasher);
-        let (prefix, suffix) = canonical_parts(&parsed.segments);
-        // Release aliases (`final`/`ga`/`release`, weight 30) are transparent:
-        // the comparator ignores them when trailing and Maven's canonical form
-        // drops them outright, so `1.0-final7` must hash like `1.0.7`.
-        let transparent = |s: &&Seg| !matches!(s, Seg::Text(t) if tag_weight(t) == Some(30));
-        for s in prefix.iter().chain(suffix.iter()).filter(transparent) {
-            match s {
-                Seg::Num(n) => {
-                    0u8.hash(&mut hasher);
-                    n.hash(&mut hasher);
-                }
-                // Tags hash by weight, not spelling: `cmp_two` compares known
-                // tags by weight, so `1.0-a` and `1.0-alpha` are equal and must
-                // hash equal. Unknown tags keep comparing (and hashing) by text.
-                Seg::Text(t) => {
-                    if let Some(w) = tag_weight(t) {
-                        1u8.hash(&mut hasher);
-                        w.hash(&mut hasher);
-                    } else {
-                        2u8.hash(&mut hasher);
-                        t.hash(&mut hasher);
-                    }
-                }
-            }
+        self.eco.as_str().hash(&mut hasher);
+        match &self.repr {
+            ParsedRepr::Rpm(v) => v.hash_key().hash(&mut hasher),
+            ParsedRepr::Debian(v) => v.hash_key().hash(&mut hasher),
+            ParsedRepr::Maven(v) => v.canonical().hash(&mut hasher),
+            _ => version_key(self)?.hash(&mut hasher),
         }
-        hasher.finish()
+        Ok(hasher.finish())
     }
 
     #[getter]
@@ -402,21 +326,6 @@ impl PyVersion {
     }
 
     fn sort_key<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        // The key encodes the generic segment ordering exactly (see
-        // `encode_segments`), prefixed by the epoch. For PEP 440 the local
-        // label (`+LOCAL`) is appended after the public encoding so the key
-        // stays isomorphic with `cmp_pep440`: a label-bearing version yields a
-        // strictly longer key (None < Some), and two labels then compare via
-        // the same segment encoding (cmp_segments).
-        let sat = |n: u64| -> i64 { i64::try_from(n).unwrap_or(i64::MAX) };
-        let mut tuples: Vec<Bound<'py, PyAny>> = Vec::new();
-        tuples.push(key_tuple(py, 2, sat(self.inner.epoch), "")?);
-        tuples.extend(encode_segments(py, &self.inner.segments)?);
-        if let ParsedRepr::Pep440(p) = &self.repr
-            && let Some(local) = p.local()
-        {
-            tuples.extend(encode_local_segments(py, local)?);
-        }
-        PyTuple::new(py, tuples)
+        PyTuple::new(py, version_key(self)?)
     }
 }

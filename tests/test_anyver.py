@@ -702,12 +702,12 @@ class TestSortKey:
         sk = v.sort_key()
         assert sk == (
             (2, 0, ""),  # epoch
-            (2, 1, ""),  # major
-            (2, 2, ""),  # minor
-            (2, 3, ""),  # patch
-            (1, 20, "rc"),  # rc (weight 20)
-            (2, 1, ""),  # 1
-            (1, 30, ""),  # release sentinel
+            (100, 1, ""),
+            (100, 2, ""),
+            (100, 3, ""),
+            (20, 0, ""),  # canonical rc weight
+            (100, 1, ""),
+            (30, 0, ""),  # release sentinel
         )
 
     def test_isomorphism_simple(self):
@@ -721,10 +721,10 @@ class TestSortKey:
     def test_isomorphism_pep440(self):
         """sort_key ordering matches compare for PEP 440 dev/post versions."""
         versions = ["1.0.dev1", "1.0a1", "1.0b1", "1.0rc1", "1.0", "1.0.post1"]
-        sorted_by_key = sorted(versions, key=lambda v: Version(v).sort_key())
+        sorted_by_key = sorted(versions, key=lambda v: Version(v, ecosystem="pep440").sort_key())
         for i in range(len(sorted_by_key) - 1):
             a, b = sorted_by_key[i], sorted_by_key[i + 1]
-            assert anyver.compare(a, b) < 0, f"{a} should be < {b}"
+            assert anyver.compare(a, b, ecosystem="pep440") < 0, f"{a} should be < {b}"
 
     def test_isomorphism_prerelease(self):
         """sort_key ordering matches compare for pre-release vs release."""
@@ -1146,7 +1146,8 @@ class TestPickle:
 
 class TestStrComparison:
     def test_eq_str(self):
-        assert Version("1.0") == "1.0.0"
+        assert Version("1.0") != "1.0.0"
+        assert Version("1.0").compare("1.0.0") == 0
 
     def test_lt_str(self):
         assert Version("1.0") < "2.0"
@@ -1573,9 +1574,10 @@ class TestVersionEqualityIsTotal:
         assert "not-a-version" not in [v]
         assert v in [v]
 
-    def test_eq_with_valid_string_still_compares(self):
+    def test_eq_with_valid_string_is_false(self):
         v = Version("1.0.0", ecosystem="semver")
-        assert v == "1.0.0"
+        assert v != "1.0.0"
+        assert v.compare("1.0.0") == 0
         assert v != "2.0.0"
 
     def test_ordering_against_unparseable_string_still_raises(self):
@@ -1650,10 +1652,10 @@ class TestMavenComparableVersion:
         assert len({va, vb}) == 1
 
     @pytest.mark.parametrize("version", ["1.0.0", "5.10.0-M1", "2.6.7.1", "1.0-jre"])
-    def test_hash_matches_generic_mode_for_ordinary_versions(self, version):
+    def test_equality_is_scoped_to_ecosystem(self, version):
         maven, generic = Version(version, ecosystem="maven"), Version(version)
-        assert maven == generic
-        assert hash(maven) == hash(generic)
+        assert maven != generic
+        assert len({maven, generic}) == 2
 
     def test_deep_nesting_is_rejected_not_flattened(self):
         with pytest.raises(ValueError, match="nests more than"):
