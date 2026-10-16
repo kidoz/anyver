@@ -2,12 +2,35 @@
 
 ## [Unreleased]
 
-Correctness pass over the security-interop layer (`osv_affected`,
-`vers_contains`, `build_vers`) and the range engine behind it. Every issue
-fixed here produced a *silent* wrong answer rather than an error, and three of
-them under-reported affected versions.
+Correctness fixes for comparison, ranges, Python protocols, and security interop.
+
+### Changed (breaking; requires a major release)
+- `Version` equality now requires matching ecosystems and another `Version`.
+  Strings and other ecosystems are unequal; use `compare()` explicitly.
+  Ordering objects from different ecosystems raises `TypeError`.
+- Generic ordering normalizes numeric zeros before suffix tags and treats
+  release aliases as transparent, removing comparison cycles.
+- `sort_key()` now uses ecosystem-specific encodings with full-width numbers.
+  Debian/RPM/Maven keys raise `ValueError`; use `sort_versions()` instead.
+  Regenerate persisted keys when upgrading.
 
 ### Fixed
+- OSV `SEMVER` ranges always use strict SemVer, independently of package
+  ecosystem and explicit ecosystem overrides. OSV npm windows use direct
+  interval ordering, without npm range prerelease admission rules.
+- VERS constraints are order independent at coincident bounds; matching
+  exclusions override matching equalities. `build_vers()` accepts whitespace
+  separators, validates bounds, and rejects shorthand.
+- PEP 440 parsing validates the entire grammar and compares normalized release,
+  pre/post/dev, and local components. Implicit post releases and release zeros
+  normalize correctly; alphanumeric local components remain intact.
+- Strict SemVer validates build metadata, while continuing to ignore it in
+  ordering. Hashes respect each ecosystem's equality, including RPM separators.
+- Caret/tilde retain prerelease lower bounds; npm prerelease admission applies
+  per branch; pessimistic `~>` respects release precision. Range increments
+  raise errors instead of overflowing at `u64::MAX`.
+- All six batch helpers accept iterators. `VersionLike` is available at runtime,
+  and `Version.__iter__` implements the declared sequence protocol.
 - `osv_affected()` no longer collapses an OSV range's events into a single
   interval. An OSV range is an event timeline: `introduced` opens a window and
   `fixed`/`last_affected` closes it, and one range routinely carries several

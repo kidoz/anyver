@@ -71,7 +71,7 @@ str(v)             # "1.2.3-rc.1+build.42"
 repr(v)            # "Version('1.2.3-rc.1+build.42')"
 
 # Compare using the Version's own detected ecosystem
-v.compare("1.2.3")      # 0
+v.compare("1.2.3")      # -1
 v.compare("2.0.0")      # -1
 v.compare("0.1.0")      # 1
 ```
@@ -158,6 +158,19 @@ d = {Version("1.0"): "stable"}
 d[Version("1.0.0")]  # "stable"
 ```
 
+Equality is scoped to the ecosystem: two `Version` objects are equal only
+when their ecosystems match and that ecosystem's comparator returns equality.
+Strings and versions from other ecosystems are unequal. Use `v.compare(other)`
+or `anyver.compare(a, b, ecosystem=...)` for explicit comparison. Ordering
+objects from different ecosystems raises `TypeError`.
+
+Generic comparison normalizes zeros before suffix tags as well as at the end:
+`1.0-rc1` equals `1.0.0-rc1`. Known tag aliases such as `a` and `alpha` also
+compare equal. PEP 440 compares public release components and local labels
+according to its own rules; local labels affect equality in that ecosystem.
+For strict validation, pass an explicit ecosystem to `Version.try_parse()`.
+Generic parsing and the auto mode's generic fallback remain permissive.
+
 ## Ecosystem Auto-Detection
 
 By default, `Version()` and `anyver.version()` use `ecosystem="auto"` — the library inspects the version string and picks the best ecosystem automatically:
@@ -229,7 +242,7 @@ anyver.compare("1!0.1", "2.0", ecosystem="pep440")     # 1
 ```
 
 The mature exact-native comparators are Debian/dpkg, RPM, Maven
-(`ComparableVersion`), strict SemVer-family modes, and PEP 440 local-version
+(`ComparableVersion`), strict SemVer-family modes, and PEP 440 public and local-version
 handling. Newer ecosystem modes start with validation plus generic or
 SemVer-compatible ordering where their native algorithm is not yet fully
 specialized.
@@ -261,18 +274,14 @@ Version("1.2.3-rc.1").sort_key()
 # PEP 440 local labels (e.g. `1.0+abc` sorts above `1.0`).
 ```
 
-> **Scope:** the key reproduces the generic/SemVer and PEP 440 orderings exactly.
-> Debian, RPM and Maven compare with their native `dpkg`/`rpm`/`ComparableVersion`
-> algorithms, which the key approximates via the generic ordering — the same
-> documented approximation the parser makes for those ecosystems. For
-> Debian/RPM/Maven, sort with `anyver.sort_versions(..., ecosystem=...)` rather
-> than by `sort_key()` when exact native ordering matters.
+> **Scope:** keys reproduce ordering within a single ecosystem for generic,
+> strict SemVer-family, and PEP 440 modes (including local labels). Compare
+> keys only from the same ecosystem. All numeric values retain the full `u64`
+> range. The tuple shape is experimental; regenerate stored keys after upgrading.
 >
-> `hash(Version(...))` follows the same encoding, with Maven versions hashed
-> through their canonical form so that equal Maven versions always hash equal.
-> Hash equality is guaranteed within one ecosystem; mixing ecosystems in a set
-> or dict is best-effort, since cross-ecosystem `==` falls back to generic
-> comparison.
+> Debian, RPM, and Maven use native algorithms. `sort_key()` raises `ValueError`
+> in those modes; use `anyver.sort_versions(..., ecosystem=...)` for exact order.
+> Hashes follow each ecosystem's equality rules, including native comparators.
 
 ## Security Interop
 
@@ -313,13 +322,21 @@ shorthand (`^1.2.3`, `~1.2`, `1.2.x`); VERS has no shorthand syntax.
 
 **OSV.** Each `introduced` → `fixed`/`last_affected` pair in a range is its own
 affected window, and a range with several pairs matches versions in any of them.
+`type: "SEMVER"` always uses strict SemVer ordering, including for packages
+whose ecosystem normally uses another comparator. `type: "ECOSYSTEM"` uses
+the package ecosystem (or explicit override). OSV windows compare version
+bounds directly and do not apply npm range prerelease admission.
 `type: "GIT"` ranges are skipped, since their events are commit hashes rather
 than versions. Ecosystem names are read as OSV writes them, including the
 release suffix (`Debian:11`, `Alpine:v3.18`); an ecosystem anyver doesn't
 recognise falls back to the generic comparator rather than raising.
 
 **Ranges.** A blank range is an error, not a universal match — pass `*` to match
-every version.
+every version. npm ranges admit prereleases only when that same AND branch
+explicitly references a prerelease on the same major/minor/patch tuple.
+Caret and tilde ranges preserve prerelease lower bounds. Pessimistic `~>1.2`
+means `>=1.2.0,<2.0.0`, while `~>1.2.3` means `>=1.2.3,<1.3.0`.
+An upper-bound increment beyond `u64::MAX` raises `ValueError`.
 
 [vers]: https://github.com/package-url/purl-spec/blob/main/VERSION-RANGE-SPEC.rst
 
@@ -330,21 +347,27 @@ every version.
 
 ```python
 # PEP 440 (Python)
-Version("1.0.dev1") < Version("1.0a1") < Version("1.0b1") < Version("1.0rc1") < Version("1.0") < Version("1.0.post1")
+anyver.sort_versions(
+    ["1.0.post1", "1.0", "1.0rc1", "1.0b1", "1.0a1", "1.0.dev1"],
+    ecosystem="pep440",
+)
+# ["1.0.dev1", "1.0a1", "1.0b1", "1.0rc1", "1.0", "1.0.post1"]
 
 # Debian
-Version("1.0~alpha") < Version("1.0~beta") < Version("1.0")
+Version("1.0~alpha", ecosystem="debian") < Version("1.0~beta", ecosystem="debian") < Version("1.0", ecosystem="debian")
 
 # RPM
-Version("1.0~rc1") < Version("1.0") < Version("1.0^git1")
+anyver.compare("1.0~rc1", "1.0", ecosystem="rpm") < 0
+anyver.compare("1.0", "1.0^git1", ecosystem="rpm") < 0
 
 # Maven — ecosystem="maven" implements Apache Maven's ComparableVersion
-Version("1.0-alpha-1") < Version("1.0-SNAPSHOT") < Version("1.0") < Version("1.0-sp-1")
+anyver.sort_versions(["1.0-sp-1", "1.0", "1.0-SNAPSHOT", "1.0-alpha-1"], ecosystem="maven")
+# ["1.0-alpha-1", "1.0-SNAPSHOT", "1.0", "1.0-sp-1"]
 anyver.compare("1.0-jre", "1.0", ecosystem="maven")   #  1 — unknown qualifiers rank above the release
 anyver.compare("1.0-1", "1.0.1", ecosystem="maven")   # -1 — `-` nests, `.` does not
 
 # Go modules
-Version("v2.0.0+incompatible") == Version("v2.0.0")
+Version("v2.0.0+incompatible", ecosystem="go") == Version("v2.0.0", ecosystem="go")
 
 # Ruby Gems — numeric, not lexical
 Version("3.2") < Version("3.10")
