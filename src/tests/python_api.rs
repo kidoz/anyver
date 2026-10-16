@@ -195,7 +195,7 @@ fn test_latest_stable_selection() {
 fn test_stable_versions_empty_when_all_prerelease() {
     let versions = ["1.0-alpha", "2.0-beta", "3.0-rc1"];
     let stable: Vec<&str> = versions.iter().copied().filter(|v| !parse(v).is_prerelease).collect();
-    assert!(stable.is_empty());
+    assert_eq!(stable, Vec::<&str>::new());
 }
 
 // --- __richcmp__ respects ecosystem ---
