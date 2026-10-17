@@ -1,8 +1,8 @@
 //! `ecosystem="maven"` parity with Apache Maven's `ComparableVersion`.
 //!
-//! Every expectation here was taken from `ComparableVersion` itself
-//! (maven-artifact 3.9.16), not from the generic comparator — see
-//! `src/strategies/maven.rs`. The cases in `maven.rs` cover the *generic*
+//! Expectations come from `ComparableVersion` (maven-artifact 3.9.16), with
+//! the upstream cycle checked directly against 3.10.0. They do not come from
+//! the generic comparator — see `src/strategies/maven.rs`. The cases in `maven.rs` cover the *generic*
 //! comparator's Maven-flavoured behaviour, which differs on purpose.
 
 use super::*;
@@ -223,4 +223,17 @@ fn test_cv_equal_versions_share_a_canonical_form() {
 fn test_cv_rejects_non_digit_start() {
     assert!(compare_str_with_ecosystem("v1.0", "1.0", "maven").is_err());
     assert!(compare_str_with_ecosystem("", "1.0", "maven").is_err());
+}
+
+// ---- Upstream non-transitivity (maven-artifact 3.10.0) ----
+#[test]
+fn test_cv_upstream_ordering_cycle_is_preserved() {
+    // Direct ComparableVersion.compareTo results. `sort_key` cannot reproduce
+    // this cycle; it keeps the other two edges and sorts alpha < release < sp.
+    for (a, b) in [("1-foo.sp-0", "1-foo-alpha"), ("1-foo-alpha", "1-foo"), ("1-foo", "1-foo.sp-0")]
+    {
+        assert_eq!(mvn(a, b), Less, "{a} versus {b}");
+        assert_eq!(mvn(b, a), Greater, "{b} versus {a}");
+    }
+    assert_eq!(parse_maven("1-foo.sp-0").unwrap().canonical(), "1-foo.sp");
 }

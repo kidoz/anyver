@@ -16,9 +16,9 @@ use crate::strategies::{
 use super::conv::{SegToPy, eco_from_str, extract_parsed_for_ecosystem};
 
 /// Tuple encoding shared by the portable sort key and Python hashing.
-fn version_key(version: &PyVersion) -> PyResult<Vec<(i32, u64, String)>> {
+fn version_key(version: &PyVersion) -> Vec<(i32, u64, String)> {
     match &version.repr {
-        ParsedRepr::Pep440(p) => Ok(p.key().to_vec()),
+        ParsedRepr::Pep440(p) => p.key().to_vec(),
         ParsedRepr::Semver(v) => {
             let mut key = vec![
                 (2, v.major, String::new()),
@@ -34,7 +34,7 @@ fn version_key(version: &PyVersion) -> PyResult<Vec<(i32, u64, String)>> {
                     });
                 }
             }
-            Ok(key)
+            key
         }
         ParsedRepr::Generic(p) => {
             let mut key = vec![(2, p.epoch, String::new())];
@@ -49,11 +49,11 @@ fn version_key(version: &PyVersion) -> PyResult<Vec<(i32, u64, String)>> {
                 });
             }
             key.push((30, 0, String::new()));
-            Ok(key)
+            key
         }
-        _ => Err(PyValueError::new_err(
-            "sort_key is unavailable for native Debian, RPM, and Maven ordering; use sort_versions",
-        )),
+        ParsedRepr::Debian(v) => v.sort_key(),
+        ParsedRepr::Rpm(v) => v.sort_key(),
+        ParsedRepr::Maven(v) => v.sort_key(),
     }
 }
 
@@ -153,7 +153,7 @@ impl PyVersion {
         !self.inner.segments.is_empty()
     }
 
-    fn __hash__(&self) -> PyResult<u64> {
+    fn __hash__(&self) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
@@ -162,9 +162,9 @@ impl PyVersion {
             ParsedRepr::Rpm(v) => v.hash_key().hash(&mut hasher),
             ParsedRepr::Debian(v) => v.hash_key().hash(&mut hasher),
             ParsedRepr::Maven(v) => v.canonical().hash(&mut hasher),
-            _ => version_key(self)?.hash(&mut hasher),
+            _ => version_key(self).hash(&mut hasher),
         }
-        Ok(hasher.finish())
+        hasher.finish()
     }
 
     fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
@@ -330,6 +330,6 @@ impl PyVersion {
     }
 
     fn sort_key<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        PyTuple::new(py, version_key(self)?)
+        PyTuple::new(py, version_key(self))
     }
 }

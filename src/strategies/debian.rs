@@ -5,6 +5,8 @@
 
 use std::cmp::Ordering;
 
+use super::SortKey;
+
 #[derive(Debug, Clone)]
 pub(crate) struct DebianVersion {
     epoch: u64,
@@ -13,6 +15,14 @@ pub(crate) struct DebianVersion {
 }
 
 impl DebianVersion {
+    /// Encode dpkg's alternating byte and arbitrary-precision digit ordering.
+    pub(crate) fn sort_key(&self) -> SortKey {
+        let mut key = vec![(0, self.epoch, String::new())];
+        encode_part(&self.upstream, &mut key);
+        encode_part(&self.revision, &mut key);
+        key
+    }
+
     pub(crate) fn hash_key(&self) -> (u64, String, String) {
         fn canonical(s: &str) -> String {
             let mut out = String::new();
@@ -39,6 +49,30 @@ impl DebianVersion {
         }
         (self.epoch, canonical(&self.upstream), canonical(&self.revision))
     }
+}
+
+fn encode_part(part: &str, key: &mut SortKey) {
+    let mut rest = part.as_bytes();
+    while let Some(&first) = rest.first() {
+        if first.is_ascii_digit() {
+            let len = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+            let digits = &part[part.len() - rest.len()..part.len() - rest.len() + len];
+            let digits = digits.trim_start_matches('0');
+            rest = &rest[len..];
+            // A final zero run equals an absent run. Internal zero runs still
+            // separate non-digit phases ("a0b" sorts below "ab").
+            if !digits.is_empty() || !rest.is_empty() {
+                key.push((0, digits.len() as u64, digits.to_string()));
+            }
+        } else {
+            key.push((dpkg_order(Some(first)), 0, String::new()));
+            rest = &rest[1..];
+        }
+    }
+    // The first end token can tie an internal zero run; the second then
+    // compares as dpkg's missing byte against the following non-digit byte.
+    // This resolves the upstream comparison before revision tokens are read.
+    key.extend([(0, 0, String::new()), (0, 0, String::new())]);
 }
 
 pub(crate) fn extract_epoch_colon(s: &str) -> (u64, &str) {
@@ -140,4 +174,49 @@ pub(crate) fn cmp_debian(a: &DebianVersion, b: &DebianVersion) -> Ordering {
         .cmp(&b.epoch)
         .then_with(|| verrevcmp(a.upstream.as_bytes(), b.upstream.as_bytes()))
         .then_with(|| verrevcmp(a.revision.as_bytes(), b.revision.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sort_key_matches_comparator_all_pairs() {
+        let mut inputs = vec!["0:1.0-00".to_string(), "1:0.1-1".to_string()];
+        for prefix in ["1", "1.0", "1a", "1~", "1-0"] {
+            for suffix in [
+                "",
+                "0",
+                "00",
+                "01",
+                "2",
+                "10",
+                "a",
+                "0a",
+                "~",
+                "0~",
+                "~0",
+                "+",
+                ".",
+                "0.0~",
+                "-1",
+                "é",
+                "99999999999999999999999999",
+            ] {
+                inputs.push(format!("{prefix}{suffix}"));
+            }
+        }
+        let parsed: Vec<_> = inputs.iter().map(|s| parse_debian(s).unwrap()).collect();
+        for (i, a) in parsed.iter().enumerate() {
+            for (j, b) in parsed.iter().enumerate() {
+                assert_eq!(
+                    a.sort_key().cmp(&b.sort_key()),
+                    cmp_debian(a, b),
+                    "{} versus {}",
+                    inputs[i],
+                    inputs[j]
+                );
+            }
+        }
+    }
 }

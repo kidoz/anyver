@@ -27,6 +27,10 @@ mod rpm;
 mod semver;
 mod validators;
 
+/// Portable lexicographic key: signed rank, full-width number, and text.
+/// Comparisons are meaningful only within the same ecosystem.
+pub(crate) type SortKey = Vec<(i32, u64, String)>;
+
 pub(crate) use generic::*;
 pub(crate) use registry::*;
 

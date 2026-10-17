@@ -205,10 +205,14 @@ def test_sort_keys_match_all_pairwise_comparisons(eco, values):
         assert (left == right) == (ka == kb)
 
 
-@pytest.mark.parametrize("eco", ["rpm", "debian", "maven"])
-def test_native_keys_fail_explicitly(eco):
-    with pytest.raises(ValueError, match="sort_versions"):
-        Version("1.0", ecosystem=eco).sort_key()
+def test_maven_sort_key_breaks_only_the_cycle_edge():
+    alpha = Version("1-foo-alpha", ecosystem="maven")
+    release = Version("1-foo", ecosystem="maven")
+    sp = Version("1-foo.sp-0", ecosystem="maven")
+    assert sp < alpha
+    assert alpha < release
+    assert release < sp
+    assert alpha.sort_key() < release.sort_key() < sp.sort_key()
 
 
 @pytest.mark.parametrize("spec", ["^1.2.3-beta.1", "~1.2.3-beta.1"])

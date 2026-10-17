@@ -1657,6 +1657,52 @@ class TestMavenComparableVersion:
         assert maven != generic
         assert len({maven, generic}) == 2
 
+    def test_upstream_ordering_cycle_is_preserved(self):
+        # Frozen from Apache maven-artifact 3.10.0, checked by the live oracle
+        # below when ANYVER_MAVEN_ARTIFACT_JAR is supplied. compare() keeps the
+        # cycle. sort_key() is a total order and flips only the qualifier/list edge.
+        pairs = [
+            ("1-foo.sp-0", "1-foo-alpha"),
+            ("1-foo-alpha", "1-foo"),
+            ("1-foo", "1-foo.sp-0"),
+        ]
+        for a, b in pairs:
+            left, right = Version(a, ecosystem="maven"), Version(b, ecosystem="maven")
+            assert anyver.compare(a, b, ecosystem="maven") == -1
+            assert left.compare(right) == -1
+            assert left < right
+            assert right > left
+        order = ["1-foo-alpha", "1-foo", "1-foo.sp-0"]
+        keyed = sorted(order, key=lambda s: Version(s, ecosystem="maven").sort_key())
+        assert keyed == order
+        sp = Version("1-foo.sp-0", ecosystem="maven")
+        alpha = Version("1-foo-alpha", ecosystem="maven")
+        assert sp < alpha
+        assert sp.sort_key() > alpha.sort_key()
+
+    def test_maven_sort_key_matches_ordinary_order_and_equality(self):
+        chain = [
+            "1.0-alpha-1",
+            "1.0-beta-1",
+            "1.0-rc-1",
+            "1.0-SNAPSHOT",
+            "1.0",
+            "1.0-sp-1",
+            "1.0-jre",
+            "1.0.1",
+        ]
+        keyed = sorted(chain, key=lambda s: Version(s, ecosystem="maven").sort_key())
+        assert keyed == anyver.sort_versions(chain, ecosystem="maven")
+        assert (
+            Version("1-1", ecosystem="maven").sort_key()
+            < Version("1.1", ecosystem="maven").sort_key()
+        )
+        equals = ["1", "1.0", "1.0.0", "1.0-final", "1-a1", "1-alpha-1"]
+        keys = [Version(s, ecosystem="maven").sort_key() for s in equals]
+        assert keys[0] == keys[1] == keys[2] == keys[3]
+        assert keys[4] == keys[5]
+        assert keys[0] != keys[4]
+
     def test_deep_nesting_is_rejected_not_flattened(self):
         with pytest.raises(ValueError, match="nests more than"):
             anyver.compare("-".join(["1"] * 5000), "1", ecosystem="maven")
@@ -1672,3 +1718,170 @@ class TestPep440HashContract:
         a, b = Version("1.0a1", ecosystem="pep440"), Version("1.0alpha1", ecosystem="pep440")
         assert a == b
         assert hash(a) == hash(b)
+
+
+class TestNativeSortKeys:
+    @pytest.mark.parametrize(
+        "ecosystem,versions",
+        [
+            (
+                "debian",
+                [
+                    "1.0~rc1",
+                    "1.0",
+                    "1.0-0",
+                    "1.0-00",
+                    "1.0-1",
+                    "1.0-1+deb12u1",
+                    "1.0+deb12u1",
+                    "1.0.1",
+                    "1.00.01",
+                    "0:1.0-1",
+                    "1:0.1-1",
+                    "1a",
+                    "1a0b",
+                    "1ab",
+                    "1a0~",
+                    "1a~",
+                    "1a0.0~",
+                    "1.0A",
+                    "1.0a",
+                    "1.0é",
+                    "1.0+",
+                    "1.0.",
+                    "1.0-99999999999999999999999999",
+                    "1.0-100000000000000000000000000",
+                ],
+            ),
+            (
+                "rpm",
+                [
+                    "1.0~rc1",
+                    "1.0",
+                    "1.0^git1",
+                    "1.0.1",
+                    "1.0+",
+                    "1.0.",
+                    "1.0é",
+                    "1.0+a",
+                    "1.0.a",
+                    "1.0A",
+                    "1.0a",
+                    "1.01",
+                    "1.1",
+                    "1.0-0",
+                    "1.0-00",
+                    "1.0-1.el9",
+                    "1.0-2.el9",
+                    "1:0.1-1",
+                    "0:1.0-1",
+                    "1.0-99999999999999999999999999",
+                    "1.0-100000000000000000000000000",
+                ],
+            ),
+        ],
+    )
+    def test_all_pairs_match_native_ordering(self, ecosystem, versions):
+        objects = [Version(s, ecosystem=ecosystem) for s in versions]
+        keys = [v.sort_key() for v in objects]
+        for i, a in enumerate(objects):
+            for j, b in enumerate(objects):
+                key_order = (keys[i] > keys[j]) - (keys[i] < keys[j])
+                assert key_order == a.compare(b), (ecosystem, versions[i], versions[j])
+                assert (a == b) == (keys[i] == keys[j])
+                if a == b:
+                    assert hash(a) == hash(b)
+        assert sorted(
+            versions, key=lambda s: Version(s, ecosystem=ecosystem).sort_key()
+        ) == anyver.sort_versions(versions, ecosystem=ecosystem)
+
+    @pytest.mark.parametrize("ecosystem", ["debian", "rpm"])
+    def test_keys_are_plain_exportable_tuples(self, ecosystem):
+        import json
+
+        key = Version("1:1.0~rc1-2", ecosystem=ecosystem).sort_key()
+        assert type(key) is tuple
+        assert all(type(part) is tuple and len(part) == 3 for part in key)
+        assert all(
+            type(rank) is int and type(number) is int and type(text) is str
+            for rank, number, text in key
+        )
+        assert json.loads(json.dumps(key)) == [list(part) for part in key]
+
+
+def test_maven_against_reference_artifact(tmp_path):
+    """Opt-in differential check against a local Maven JAR; never downloads."""
+    import os
+    import random
+    import shutil
+    import subprocess
+    from itertools import product
+    from pathlib import Path
+
+    jar = os.environ.get("ANYVER_MAVEN_ARTIFACT_JAR")
+    if not jar:
+        pytest.skip("set ANYVER_MAVEN_ARTIFACT_JAR to run the Apache Maven reference check")
+    jar = Path(jar).resolve(strict=True)
+    java, javac = shutil.which("java"), shutil.which("javac")
+    assert java and javac, "a JDK is required when ANYVER_MAVEN_ARTIFACT_JAR is set"
+    oracle = Path(__file__).parent / "fixtures" / "MavenOracle.java"
+    subprocess.run(
+        [javac, "-encoding", "UTF-8", "-cp", str(jar), "-d", str(tmp_path), str(oracle)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    versions = {"1-foo.sp-0", "1-foo-alpha", "1-foo", "1.0", "1.0.0", "1a1", "1-alpha-1"}
+    for prefix, suffix in product(
+        ["1", "1.0", "1-foo", "1-foo.sp", "1-alpha", "1-0"],
+        [
+            "",
+            "-0",
+            ".0",
+            "-alpha",
+            "-sp",
+            ".sp-0",
+            "-foo",
+            ".foo-0",
+            "-alpha-1",
+            ".1",
+            "-1",
+            "+build1",
+            "-😀",
+            "-\ue000",
+        ],
+    ):
+        versions.add(prefix + suffix)
+    rng = random.Random(47291)
+    tokens = [
+        "0",
+        "01",
+        "99999999999999999999999999",
+        "alpha",
+        "rc",
+        "sp",
+        "foo",
+        "ga",
+        ".",
+        "-",
+        "😀",
+        "\ue000",
+    ]
+    versions.update("1" + "".join(rng.choices(tokens, k=rng.randrange(1, 9))) for _ in range(96))
+    pairs = list(product(sorted(versions), repeat=2))
+    reference = subprocess.run(
+        [java, "-cp", os.pathsep.join([str(tmp_path), str(jar)]), "MavenOracle"],
+        input="".join(a + "\t" + b + "\n" for a, b in pairs),
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+        timeout=30,
+    )
+    expected = reference.stdout.splitlines()
+    assert len(expected) == len(pairs)
+    actual = anyver.batch_compare(pairs, ecosystem="maven")
+    for (a, b), result, upstream in zip(pairs, actual, expected, strict=True):
+        assert result == int(upstream), (a, b, result, upstream)
+    print(f"Maven reference parity: {len(versions)} versions, {len(pairs)} pairwise comparisons")

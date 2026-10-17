@@ -84,9 +84,14 @@ class Version:
         """Structured representation including `raw`, `ecosystem`, `epoch`,
         `major`/`minor`/`patch`, `build`, and release-type flags."""
     def sort_key(self) -> tuple[tuple[int, int, str], ...]:
-        """Tuple key matching comparison within one ecosystem.
+        """Tuple key for ordering versions within one ecosystem.
 
-        Raises ValueError for native Debian, RPM, and Maven comparators.
+        Debian and RPM keys reproduce native comparison, including unbounded
+        numeric runs. Maven returns a total order: ordinary releases and
+        qualifiers match compare(), but a qualifier compared with a nested
+        list can disagree. compare() still preserves Maven's cycle, for
+        example `1-foo.sp-0 < 1-foo-alpha`, while the key sorts
+        `1-foo-alpha < 1-foo < 1-foo.sp-0`.
         """
 
 # --- Module-level functions ---

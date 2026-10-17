@@ -3,6 +3,7 @@
 
 use std::cmp::Ordering;
 
+use super::SortKey;
 use super::debian::extract_epoch_colon;
 
 #[derive(Debug, Clone)]
@@ -13,6 +14,27 @@ pub(crate) struct RpmVersion {
 }
 
 impl RpmVersion {
+    /// Encode rpmvercmp tokens: tilde < end < caret < alpha < numeric.
+    pub(crate) fn sort_key(&self) -> SortKey {
+        let (epoch, version, release) = self.hash_key();
+        let mut key = vec![(0, epoch, String::new())];
+        for part in [version, release] {
+            for token in part {
+                if token == "~" {
+                    key.push((0, 0, String::new()));
+                } else if token == "^" {
+                    key.push((2, 0, String::new()));
+                } else if let Some(digits) = token.strip_prefix('n') {
+                    key.push((4, digits.len() as u64, digits.to_string()));
+                } else if let Some(alpha) = token.strip_prefix('s') {
+                    key.push((3, 0, alpha.to_string()));
+                }
+            }
+            key.push((1, 0, String::new()));
+        }
+        key
+    }
+
     pub(crate) fn hash_key(&self) -> (u64, Vec<String>, Vec<String>) {
         fn tokens(s: &str) -> Vec<String> {
             let mut rest = s.as_bytes();
@@ -186,4 +208,52 @@ pub(crate) fn cmp_rpm(a: &RpmVersion, b: &RpmVersion) -> Ordering {
         .cmp(&b.epoch)
         .then_with(|| rpmverscmp(&a.version, &b.version))
         .then_with(|| rpmverscmp(&a.release, &b.release))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sort_key_matches_comparator_all_pairs() {
+        let mut inputs = vec!["0:1.0-00".to_string(), "1:0.1-1".to_string()];
+        for prefix in ["1", "1.0", "1a", "1~", "1-0"] {
+            for suffix in [
+                "",
+                "0",
+                "00",
+                "01",
+                "2",
+                "10",
+                "a",
+                "A",
+                "0a",
+                "~",
+                "^",
+                "^a",
+                "0~",
+                "~0",
+                "+",
+                ".",
+                "0.0~",
+                "-1",
+                "é",
+                "99999999999999999999999999",
+            ] {
+                inputs.push(format!("{prefix}{suffix}"));
+            }
+        }
+        let parsed: Vec<_> = inputs.iter().map(|s| parse_rpm(s).unwrap()).collect();
+        for (i, a) in parsed.iter().enumerate() {
+            for (j, b) in parsed.iter().enumerate() {
+                assert_eq!(
+                    a.sort_key().cmp(&b.sort_key()),
+                    cmp_rpm(a, b),
+                    "{} versus {}",
+                    inputs[i],
+                    inputs[j]
+                );
+            }
+        }
+    }
 }
