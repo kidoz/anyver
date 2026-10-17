@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [2.0.0] - 2026-10-17
+## [2.0.0] - 2026-10-18
 
 Major release: changes to stable `Version` operators, comparison results,
 `sort_key()` availability, and `satisfies()` behavior require migration from

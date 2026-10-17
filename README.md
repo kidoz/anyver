@@ -413,7 +413,7 @@ Version **2.0.0** changes stable comparison results and `Version` operators,
 rejects empty `satisfies()` ranges, and replaces generic Debian/RPM sort keys
 with native encodings. Maven `sort_key()` is a total order and can disagree
 with `compare()` when a qualifier meets a nested list. See the [2.0.0
-migration notes](CHANGELOG.md#200---2026-10-17) before upgrading from 1.2.0.
+migration notes](CHANGELOG.md#200---2026-10-18) before upgrading from 1.2.0.
 
 The public API surface covered by SemVer guarantees:
 
