@@ -51,4 +51,4 @@ jobs:
           source .venv/bin/activate
           pip install 'maturin>=1.15,<2.0' 'pytest>=9.1.1'
           maturin develop --release
-          pytest tests/test_anyver.py -v
+          pytest tests/ -v
