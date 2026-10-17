@@ -2,22 +2,47 @@
 
 ## [Unreleased]
 
-Correctness fixes for comparison, ranges, Python protocols, and security interop.
-Python 3.15 joins the supported matrix.
+## [2.0.0] - 2026-10-17
+
+Major release: changes to stable `Version` operators, comparison results,
+`sort_key()` availability, and `satisfies()` behavior require migration from
+1.2.0. The additive Python and security-interoperability work ships alongside
+those breaking changes.
 
 ### Added
 - Python 3.15 is tested in CI and declared in the PyPI classifiers. The
   `abi3-py311` wheel already covers it; no new artifacts are published.
+- `pypi` is accepted as an alias for the `pep440` ecosystem.
+- `VersionLike` is available at runtime, and `Version.__iter__` implements the
+  declared sequence protocol.
+- All six batch helpers accept iterators: `sort_versions`, `batch_compare`,
+  `min_version`, `max_version`, `stable_versions`, and `latest_stable`.
 
-### Changed (breaking; requires a major release)
+### Changed (breaking)
 - `Version` equality now requires matching ecosystems and another `Version`.
   Strings and other ecosystems are unequal; use `compare()` explicitly.
   Ordering objects from different ecosystems raises `TypeError`.
 - Generic ordering normalizes numeric zeros before suffix tags and treats
   release aliases as transparent, removing comparison cycles.
 - `sort_key()` now uses ecosystem-specific encodings with full-width numbers.
-  Debian/RPM/Maven keys raise `ValueError`; use `sort_versions()` instead.
-  Regenerate persisted keys when upgrading.
+  Debian and RPM keys now reproduce their native comparators, including
+  epochs, revisions, markers, and arbitrary-precision numeric runs. Regenerate
+  persisted keys when upgrading. Maven `sort_key()` returns a total order for
+  database sorting. It matches `compare()` for ordinary releases and
+  qualifiers, and versions Maven considers equal share a key. A qualifier
+  compared with a nested list can disagree with `compare()`. That rule is what
+  makes `ComparableVersion` cyclic, verified against maven-artifact 3.10.0:
+  `compare()` gives `1-foo.sp-0 < 1-foo-alpha < 1-foo < 1-foo.sp-0`, while the
+  key sorts `1-foo-alpha < 1-foo < 1-foo.sp-0`. `compare()` keeps the native
+  cycle.
+- PEP 440 public and local comparison results change to follow normalized
+  release, pre/post/dev, and local components. For example, `1.0rc1` now equals
+  `1.0.0rc1`, and `1.0-1` equals `1.0.post1`.
+- `satisfies()` rejects empty ranges instead of matching every version, applies
+  npm prerelease admission per branch, preserves caret/tilde prerelease bounds,
+  and uses release precision for pessimistic `~>` bounds. Use `*` for an
+  unconstrained range and explicitly admit npm prereleases on the same core
+  version tuple.
 
 ### Fixed
 - OSV `SEMVER` ranges always use strict SemVer, independently of package
@@ -34,8 +59,6 @@ Python 3.15 joins the supported matrix.
 - Caret/tilde retain prerelease lower bounds; npm prerelease admission applies
   per branch; pessimistic `~>` respects release precision. Range increments
   raise errors instead of overflowing at `u64::MAX`.
-- All six batch helpers accept iterators. `VersionLike` is available at runtime,
-  and `Version.__iter__` implements the declared sequence protocol.
 - `osv_affected()` no longer collapses an OSV range's events into a single
   interval. An OSV range is an event timeline: `introduced` opens a window and
   `fixed`/`last_affected` closes it, and one range routinely carries several
@@ -62,15 +85,17 @@ Python 3.15 joins the supported matrix.
 - Wildcards combined with an operator (`>=1.2.x`, `<=2.x`) parse instead of
   raising `invalid x-range`. The bound lands on the edge of the wildcarded
   window, matching npm: `>1.2.x` is `>=1.3.0`, `<=1.2.x` is `<1.3.0`.
-- `Version.__eq__` returns `False` for a string that isn't a valid version in
-  that ecosystem, instead of raising `ValueError`. Raising broke `in`, dict and
-  set lookups, and `assertEqual`. Ordering comparisons (`<`, `>`, …) against an
-  unparseable string still raise.
+- `Version.__eq__` returns `False` for all strings, including invalid version
+  strings, instead of parsing them or raising `ValueError`. Ordering
+  comparisons (`<`, `>`, …) against an unparseable string still raise.
 - Removed an unreachable clause in ecosystem auto-detection: the Conda check
   re-tested `.post`/`.dev`, which the PEP 440 check above it had already
   claimed. Detection results are unchanged.
 
 ### Changed
+- Upgraded PyO3 0.29 → 0.30.1, retaining `abi3-py311`: one wheel per platform
+  covers CPython 3.11 through 3.15. PyO3's Rust 1.85 minimum is below this
+  crate's unchanged Rust 1.93 floor.
 - `vers:` strings now follow the PURL-spec VERS grammar. Constraints are
   separated by `|` (a canonical string such as `vers:npm/>=2.0.0|<5.0.0`
   previously failed to parse) and evaluated as a *set* rather than a
@@ -82,10 +107,11 @@ Python 3.15 joins the supported matrix.
   Output is joined with `|`. `build_vers()` now rejects npm/cargo shorthand
   (`^1.2.3`, `~1.2`), which has no VERS equivalent and was previously copied
   into the output verbatim; use `satisfies()` for that syntax.
-- `pypi` is accepted as an alias for the `pep440` ecosystem.
 
-These four functions are listed as outside the SemVer-stable surface in the
-README, so the behaviour changes land in a minor release.
+The interop helpers `build_vers`, `vers_contains`, `osv_affected`,
+`range_contains`, and `ranges_intersect` are not in the README's stable list.
+Their fixes ship in 2.0.0 alongside the stable API changes above; they do not
+make this release eligible for a minor version bump.
 
 ## [1.2.0] - 2026-07-26
 

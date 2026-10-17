@@ -274,14 +274,30 @@ Version("1.2.3-rc.1").sort_key()
 # PEP 440 local labels (e.g. `1.0+abc` sorts above `1.0`).
 ```
 
-> **Scope:** keys reproduce ordering within a single ecosystem for generic,
-> strict SemVer-family, and PEP 440 modes (including local labels). Compare
-> keys only from the same ecosystem. All numeric values retain the full `u64`
-> range. The tuple shape is experimental; regenerate stored keys after upgrading.
+> **Scope:** keys order versions within a single ecosystem. Debian, RPM,
+> generic, strict SemVer-family, and PEP 440 keys reproduce comparison.
+> Compare keys only from the same ecosystem. Numeric values retain their full
+> precision, including Debian/RPM digit runs wider than `u64` and Maven's
+> arbitrary-precision numbers. The tuple shape is experimental; regenerate
+> stored keys after upgrading.
 >
-> Debian, RPM, and Maven use native algorithms. `sort_key()` raises `ValueError`
-> in those modes; use `anyver.sort_versions(..., ecosystem=...)` for exact order.
+> Maven `sort_key()` is a total order for database sorting. It matches
+> `compare()` for ordinary releases and qualifiers, and versions Maven treats
+> as equal share a key. A qualifier compared with a nested list can disagree
+> with `compare()`, because that is the rule behind Maven's cycle. Verified
+> against maven-artifact 3.10.0, `compare()` gives
+> `1-foo.sp-0 < 1-foo-alpha < 1-foo < 1-foo.sp-0`, while the key sorts
+> `1-foo-alpha < 1-foo < 1-foo.sp-0`. `compare()` keeps the native results.
 > Hashes follow each ecosystem's equality rules, including native comparators.
+
+The Maven reference check is optional and runs offline against a local JAR
+with a JDK installed. It checks all pairs in a deterministic corpus, including
+the cycle; ordinary tests retain the verified cycle as a regression:
+
+```bash
+ANYVER_MAVEN_ARTIFACT_JAR=/path/to/maven-artifact-3.10.0.jar \
+  pytest tests/test_anyver.py -k maven_against_reference_artifact -v -s
+```
 
 ## Security Interop
 
@@ -391,8 +407,15 @@ Built in Rust for speed. Typical benchmarks (Apple M-series):
 
 ## Stability & Versioning
 
-`anyver` follows [Semantic Versioning](https://semver.org/). The public API
-surface covered by SemVer guarantees:
+`anyver` follows [Semantic Versioning](https://semver.org/).
+
+Version **2.0.0** changes stable comparison results and `Version` operators,
+rejects empty `satisfies()` ranges, and replaces generic Debian/RPM sort keys
+with native encodings. Maven `sort_key()` is a total order and can disagree
+with `compare()` when a qualifier meets a nested list. See the [2.0.0
+migration notes](CHANGELOG.md#200---2026-10-17) before upgrading from 1.2.0.
+
+The public API surface covered by SemVer guarantees:
 
 **Stable** (breaking changes require a major version bump):
 
@@ -415,7 +438,8 @@ surface covered by SemVer guarantees:
 **Experimental** (may change within minor versions until documented stable):
 
 - `Version.sort_key()` tuple shape (the encoding scheme can evolve if new
-  ecosystems require additional distinguishing fields).
+  ecosystems require additional distinguishing fields). This exception does
+  not cover removing support for an ecosystem or starting to raise errors.
 - The `ecosystem="auto"` detection heuristic. The *rules* may be refined to
   reduce false positives; the *existing correct* detections will not flip.
 - Error messages and exception attribute text.
