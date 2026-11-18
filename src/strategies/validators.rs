@@ -46,8 +46,12 @@ pub(crate) fn validate_calver(input: &str) -> Result<(), String> {
 
 pub(crate) fn validate_docker(input: &str) -> Result<(), String> {
     let s = input.trim();
-    if s.is_empty() {
-        return Err("empty Docker tag".to_string());
+    let mut bytes = s.bytes();
+    if s.len() > 128
+        || !bytes.next().is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
+        || !bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+    {
+        return Err(format!("invalid Docker tag: '{input}'"));
     }
     Ok(())
 }
@@ -80,9 +84,14 @@ pub(crate) fn validate_gentoo(input: &str) -> Result<(), String> {
 
 pub(crate) fn validate_cran(input: &str) -> Result<(), String> {
     let s = input.trim();
-    validate_digit_start(s, "R/CRAN")?;
-    if !s.bytes().all(|b| b.is_ascii_digit() || b == b'.' || b == b'-') {
-        return Err(format!("R/CRAN version must contain only digits, '.', or '-': '{input}'"));
+    if !s.contains(['.', '-'])
+        || s.split(['.', '-']).any(|part| {
+            part.is_empty()
+                || !part.bytes().all(|b| b.is_ascii_digit())
+                || part.parse::<u64>().is_err()
+        })
+    {
+        return Err(format!("invalid R/CRAN package version: '{input}'"));
     }
     Ok(())
 }

@@ -466,8 +466,7 @@ fn test_docker_eco_calver() {
 }
 
 #[test]
-fn test_docker_eco_permissive() {
-    // Docker accepts anything — no validation
+fn test_docker_eco_named_tags() {
     assert!(compare_str_with_ecosystem("latest", "stable", "docker").is_ok());
 }
 

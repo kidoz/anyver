@@ -361,6 +361,12 @@ def test_cpan_decimal_dotted_and_alpha_versions():
     assert Version.try_parse("1.2_3.4", "cpan") is None
 
 
+def test_cran_requires_numeric_components():
+    assert anyver.compare("1.2-3", "1.2.3", "cran") == 0
+    for malformed in ["1", "1..2", "1.-2", "1.2-"]:
+        assert Version.try_parse(malformed, "cran") is None
+
+
 def test_alpine_package_suffixes_commits_and_revisions():
     versions = [
         "1.0_pre",
@@ -402,6 +408,24 @@ def test_arch_package_release_and_separator_order():
         "1.0-0",
         "1.0-1",
     ]
+
+
+def test_debian_rejects_invalid_epoch_and_empty_revision():
+    assert Version("0001:1.0-1", "debian").epoch == 1
+    signed = Version("+1:1.0", "debian")
+    assert signed.epoch == 1
+    assert signed.raw == "+1:1.0"
+    assert signed == Version("1:1.0", "debian")
+    assert anyver.compare("2147483647:1:2", "2147483646:10", "debian") == 1
+    for malformed in ["-0:1.0", ":1.0", "1:", "2147483648:1", "1.0-", "1.0 2"]:
+        assert Version.try_parse(malformed, "debian") is None
+
+
+def test_docker_validates_tag_syntax():
+    assert Version.try_parse("_Release.1-rc", "docker") is not None
+    assert Version.try_parse("x" * 128, "docker") is not None
+    for malformed in ["a:", ".initial", "-initial", "has+plus", "x" * 129, "有効"]:
+        assert Version.try_parse(malformed, "docker") is None
 
 
 def test_homebrew_orders_formula_revisions_after_the_upstream_version():

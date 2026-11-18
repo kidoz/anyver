@@ -6,6 +6,7 @@
 use std::cmp::Ordering;
 
 use super::SortKey;
+use crate::parser::{ParsedVersion, parse_generic};
 
 #[derive(Debug, Clone)]
 pub(crate) struct DebianVersion {
@@ -15,6 +16,16 @@ pub(crate) struct DebianVersion {
 }
 
 impl DebianVersion {
+    pub(crate) fn version_view(input: &str) -> ParsedVersion {
+        if let Some(unsigned) = input.trim().strip_prefix('+').filter(|text| text.contains(':')) {
+            let mut parsed = parse_generic(unsigned);
+            parsed.raw = input.to_string();
+            parsed
+        } else {
+            parse_generic(input)
+        }
+    }
+
     /// Encode dpkg's alternating byte and arbitrary-precision digit ordering.
     pub(crate) fn sort_key(&self) -> SortKey {
         let mut key = vec![(0, self.epoch, String::new())];
@@ -92,16 +103,27 @@ pub(crate) fn extract_epoch_colon(s: &str) -> (u64, &str) {
 
 pub(crate) fn parse_debian(input: &str) -> Result<DebianVersion, String> {
     let s = input.trim();
-    if s.is_empty() {
-        return Err("empty Debian version".to_string());
-    }
-    let (epoch, rest) = extract_epoch_colon(s);
-    // Split upstream and revision at last '-'
-    let (upstream, revision) = match rest.rfind('-') {
-        Some(pos) => (rest[..pos].to_string(), rest[pos + 1..].to_string()),
-        None => (rest.to_string(), String::new()),
+    let error = || format!("invalid Debian version: '{input}'");
+    let (epoch, rest) = match s.split_once(':') {
+        Some((epoch, rest)) => {
+            let epoch = epoch.strip_prefix('+').unwrap_or(epoch);
+            if !epoch.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(error());
+            }
+            let epoch = epoch.parse::<i32>().ok().and_then(|n| u64::try_from(n).ok());
+            (epoch.ok_or_else(error)?, rest)
+        }
+        None => (0, s),
     };
-    Ok(DebianVersion { epoch, upstream, revision })
+    let (upstream, revision) = match rest.rsplit_once('-') {
+        Some((_, "")) => return Err(error()),
+        Some(parts) => parts,
+        None => (rest, ""),
+    };
+    if upstream.is_empty() || rest.bytes().any(|b| b.is_ascii_whitespace() || b == 0) {
+        return Err(error());
+    }
+    Ok(DebianVersion { epoch, upstream: upstream.to_string(), revision: revision.to_string() })
 }
 
 pub(crate) fn dpkg_order(c: Option<u8>) -> i32 {

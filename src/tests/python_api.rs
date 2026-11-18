@@ -58,7 +58,6 @@ fn test_docker_eco_reject_empty() {
 
 #[test]
 fn test_docker_eco_accept_text_tags() {
-    // Docker accepts any non-empty string
     assert!(compare_str_with_ecosystem("latest", "stable", "docker").is_ok());
     assert!(compare_str_with_ecosystem("alpine", "slim", "docker").is_ok());
 }

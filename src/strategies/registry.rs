@@ -48,6 +48,7 @@ impl ParsedRepr {
     pub(crate) fn version_view(&self, input: &str) -> ParsedVersion {
         match self {
             Self::Generic(parsed) => parsed.clone(),
+            Self::Debian(_) => DebianVersion::version_view(input),
             Self::Jdk(parsed) => parsed.version_view(input),
             Self::Nuget(parsed) => parsed.version_view(input),
             _ => parse_generic(input),
