@@ -32,6 +32,7 @@ mod validators;
 pub(crate) type SortKey = Vec<(i32, u64, String)>;
 
 pub(crate) use generic::*;
+pub(crate) use pep440::compatible_upper_bound;
 pub(crate) use registry::*;
 
 // `parser`/`debian`/`rpm`/`semver` internals are otherwise reached only through
@@ -43,5 +44,4 @@ pub(crate) use debian::verrevcmp;
 pub(crate) use maven::parse_maven;
 #[cfg(test)]
 pub(crate) use rpm::rpmverscmp;
-#[cfg(test)]
-pub(crate) use semver::{cmp_semver_strict, parse_semver_strict};
+pub(crate) use semver::{SemVer, cmp_semver_strict, parse_semver_strict};

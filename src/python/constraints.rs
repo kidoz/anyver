@@ -46,14 +46,14 @@ pub(crate) fn satisfies(version: &str, constraint: &str, ecosystem: &str) -> PyR
 #[pyfunction(signature = (version, range, ecosystem = "generic"))]
 pub(crate) fn range_contains(version: &str, range: &str, ecosystem: &str) -> PyResult<bool> {
     let eco = eco_from_str(ecosystem)?;
-    let parsed = RangeSet::parse(range).map_err(PyValueError::new_err)?;
+    let parsed = RangeSet::parse(range, eco).map_err(PyValueError::new_err)?;
     parsed.contains(eco, version).map_err(PyValueError::new_err)
 }
 
 #[pyfunction(signature = (left, right, ecosystem = "generic"))]
 pub(crate) fn ranges_intersect(left: &str, right: &str, ecosystem: &str) -> PyResult<bool> {
     let eco = eco_from_str(ecosystem)?;
-    let left = RangeSet::parse(left).map_err(PyValueError::new_err)?;
-    let right = RangeSet::parse(right).map_err(PyValueError::new_err)?;
+    let left = RangeSet::parse(left, eco).map_err(PyValueError::new_err)?;
+    let right = RangeSet::parse(right, eco).map_err(PyValueError::new_err)?;
     left.intersects(eco, &right).map_err(PyValueError::new_err)
 }

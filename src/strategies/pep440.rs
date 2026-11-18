@@ -10,6 +10,8 @@ pub(crate) type KeyPart = (i32, u64, String);
 #[derive(Debug, Clone)]
 pub(crate) struct Pep440Version {
     key: Vec<KeyPart>,
+    pub(crate) is_prerelease: bool,
+    pub(crate) is_postrelease: bool,
 }
 
 impl Pep440Version {
@@ -41,21 +43,41 @@ fn suffix(input: &mut &str, names: &[&str]) -> Result<Option<(usize, u64)>, Stri
     Ok(None)
 }
 
-pub(crate) fn parse_pep440(input: &str) -> Result<Pep440Version, String> {
-    let lower = input.trim().to_ascii_lowercase();
-    let mut rest = strip_v(&lower);
-    let first = number(&mut rest)?.ok_or_else(|| format!("invalid PEP 440 version: '{input}'"))?;
+fn release_numbers(rest: &mut &str) -> Result<(u64, Vec<u64>), String> {
+    let first = number(rest)?.ok_or_else(|| format!("invalid PEP 440 release: '{rest}'"))?;
     let (epoch, first_release) = if let Some(tail) = rest.strip_prefix('!') {
-        rest = tail;
-        (first, number(&mut rest)?.ok_or("missing PEP 440 release")?)
+        *rest = tail;
+        (first, number(rest)?.ok_or("missing PEP 440 release")?)
     } else {
         (0, first)
     };
     let mut release = vec![first_release];
     while rest.starts_with('.') && rest.as_bytes().get(1).is_some_and(u8::is_ascii_digit) {
-        rest = &rest[1..];
-        release.push(number(&mut rest)?.ok_or("missing release number")?);
+        *rest = &rest[1..];
+        release.push(number(rest)?.ok_or("missing release number")?);
     }
+    Ok((epoch, release))
+}
+
+/// The first development release outside the compatible release prefix.
+pub(crate) fn compatible_upper_bound(input: &str) -> Result<String, String> {
+    parse_pep440(input)?;
+    if input.contains('+') {
+        return Err("local labels are invalid in a compatible release specifier".to_string());
+    }
+    let mut rest = strip_v(input.trim());
+    let (epoch, mut release) = release_numbers(&mut rest)?;
+    release.pop();
+    let last = release.last_mut().ok_or("compatible release requires at least two components")?;
+    *last = last.checked_add(1).ok_or("range upper bound exceeds u64")?;
+    let prefix = release.iter().map(u64::to_string).collect::<Vec<_>>().join(".");
+    Ok(format!("{epoch}!{prefix}.dev0"))
+}
+
+pub(crate) fn parse_pep440(input: &str) -> Result<Pep440Version, String> {
+    let lower = input.trim().to_ascii_lowercase();
+    let mut rest = strip_v(&lower);
+    let (epoch, mut release) = release_numbers(&mut rest)?;
     let pre = suffix(&mut rest, &["alpha", "beta", "preview", "pre", "rc", "a", "b", "c"])?.map(
         |(rank, n)| {
             (
@@ -109,7 +131,11 @@ pub(crate) fn parse_pep440(input: &str) -> Result<Pep440Version, String> {
     key.push((i32::from(post.is_some()), post.unwrap_or(0), String::new()));
     key.push((i32::from(dev.is_none()), dev.unwrap_or(0), String::new()));
     key.extend(local);
-    Ok(Pep440Version { key })
+    Ok(Pep440Version {
+        key,
+        is_prerelease: pre.is_some() || dev.is_some(),
+        is_postrelease: post.is_some(),
+    })
 }
 
 pub(crate) fn cmp_pep440(a: &Pep440Version, b: &Pep440Version) -> Ordering {

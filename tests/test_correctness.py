@@ -304,3 +304,58 @@ def test_iterator_errors_are_preserved(function):
 
     with pytest.raises(RuntimeError, match="iterator failed"):
         function(broken())
+
+
+@pytest.mark.parametrize("bound", ["1.2.3-rc.x", "1.2.3+linux.x86"])
+def test_exact_semver_suffix_is_not_a_wildcard(bound):
+    assert anyver.satisfies(bound, f"=={bound}", "semver")
+    assert not anyver.satisfies("1.2.9", f"=={bound}", "semver")
+    assert anyver.satisfies("1.2.9", "1.2.x", "semver")
+
+
+@pytest.mark.parametrize(
+    "spec,target,expected",
+    [
+        ("~=1.4", "1.9", True),
+        ("~=V01.04", "1.9", True),
+        ("~=1.4", "2.0.dev0", False),
+        ("~=1.4.0", "1.5", False),
+        ("~=1.4.0", "1.4.7", True),
+        ("~=1!1.4rc1", "1!1.4", True),
+        ("~=1!1.4rc1", "1!1.4rc0", False),
+        ("~=1.2.3.4", "1.2.4.dev0", False),
+        ("~=1.2.3.4", "1.2.3.9", True),
+    ],
+)
+def test_pep440_compatible_release(spec, target, expected):
+    assert anyver.range_contains(target, spec, "pep440") is expected
+    assert anyver.ranges_intersect(spec, "==" + target, "pep440") is expected
+
+
+@pytest.mark.parametrize("spec", ["~=1", "~=1.4+linux"])
+def test_invalid_pep440_compatible_release(spec):
+    with pytest.raises(ValueError):
+        anyver.range_contains("1.4", spec, "pep440")
+
+
+@pytest.mark.parametrize(
+    "left,right,overlap",
+    [
+        (">1.0.0", "<1.0.1", False),
+        (">1.0.0", "<=1.0.1", True),
+        (">1.0.0", "<1.0.1-beta", False),
+        (">=1.0.1-alpha", "<1.0.1-beta", True),
+        (">1.0.1-alpha", "<1.0.1-alpha.0", False),
+        (">1.0.1-alpha", "<=1.0.1-alpha.0", True),
+        ("<=1.0.1-alpha", "<1.0.1-beta", True),
+        (">=1.0.0,!=1.0.0,!=1.0.1", "<1.0.2", False),
+        (">=1.0.0,!=1.0.0,!=1.0.1", "<=1.0.2", True),
+        ("<0.0.0", "*", False),
+        (">=0.0.0-0", "<0.0.0-0.0", True),
+        (">1.0.18446744073709551615", "<=1.1.0", True),
+        (">18446744073709551615.18446744073709551615.18446744073709551615", "*", False),
+    ],
+)
+def test_npm_intersection_has_an_admitted_version(left, right, overlap):
+    assert anyver.ranges_intersect(left, right, "npm") is overlap
+    assert anyver.ranges_intersect(right, left, "npm") is overlap

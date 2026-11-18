@@ -4,12 +4,32 @@
 use crate::parser::strip_v;
 use std::cmp::Ordering;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SemVer {
     pub(crate) major: u64,
     pub(crate) minor: u64,
     pub(crate) patch: u64,
     pub(crate) pre: Option<String>,
+}
+
+impl SemVer {
+    pub(crate) fn release(major: u64, minor: u64, patch: u64) -> Self {
+        Self { major, minor, patch, pre: None }
+    }
+
+    pub(crate) fn core(&self) -> (u64, u64, u64) {
+        (self.major, self.minor, self.patch)
+    }
+
+    pub(crate) fn next_release(&self) -> Option<Self> {
+        if let Some(patch) = self.patch.checked_add(1) {
+            return Some(Self::release(self.major, self.minor, patch));
+        }
+        if let Some(minor) = self.minor.checked_add(1) {
+            return Some(Self::release(self.major, minor, 0));
+        }
+        Some(Self::release(self.major.checked_add(1)?, 0, 0))
+    }
 }
 
 pub(crate) fn parse_strict_u64(s: &str, label: &str) -> Result<u64, String> {

@@ -12,19 +12,19 @@ use crate::ranges::RangeSet;
 #[test]
 fn test_empty_range_is_rejected() {
     for input in ["", "   ", ",", " , ", "||"] {
-        let err = RangeSet::parse(input).unwrap_err();
+        let err = RangeSet::parse(input, Ecosystem::Generic).unwrap_err();
         assert!(err.contains("empty range"), "{input:?} should be rejected, got: {err}");
     }
 }
 
 #[test]
 fn test_empty_branch_in_or_is_rejected() {
-    assert!(RangeSet::parse(">=1.0 || ").is_err());
+    assert!(RangeSet::parse(">=1.0 || ", Ecosystem::Generic).is_err());
 }
 
 #[test]
 fn test_star_still_matches_everything() {
-    let range = RangeSet::parse("*").unwrap();
+    let range = RangeSet::parse("*", Ecosystem::Generic).unwrap();
     assert!(range.contains(Ecosystem::Generic, "0.0.1").unwrap());
     assert!(range.contains(Ecosystem::Generic, "99.0.0").unwrap());
 }
@@ -34,9 +34,9 @@ fn test_star_still_matches_everything() {
 // ====================================================================
 
 fn intersects(left: &str, right: &str) -> bool {
-    RangeSet::parse(left)
+    RangeSet::parse(left, Ecosystem::Generic)
         .unwrap()
-        .intersects(Ecosystem::Generic, &RangeSet::parse(right).unwrap())
+        .intersects(Ecosystem::Generic, &RangeSet::parse(right, Ecosystem::Generic).unwrap())
         .unwrap()
 }
 
@@ -73,7 +73,10 @@ fn test_intersect_respects_not_equals_on_a_point_overlap() {
 // ====================================================================
 
 fn contains(range: &str, version: &str) -> bool {
-    RangeSet::parse(range).unwrap().contains(Ecosystem::Generic, version).unwrap()
+    RangeSet::parse(range, Ecosystem::Generic)
+        .unwrap()
+        .contains(Ecosystem::Generic, version)
+        .unwrap()
 }
 
 #[test]
@@ -117,16 +120,16 @@ fn test_range_increment_overflow_is_an_error() {
         "~1.18446744073709551615.0",
         "^0.0.18446744073709551615",
     ] {
-        assert!(crate::ranges::RangeSet::parse(input).is_err(), "{input}");
+        assert!(crate::ranges::RangeSet::parse(input, Ecosystem::Generic).is_err(), "{input}");
     }
 }
 
 #[test]
 fn test_npm_prerelease_lower_bound_and_admission() {
-    let range = crate::ranges::RangeSet::parse("^1.2.3-beta.1").unwrap();
+    let range = crate::ranges::RangeSet::parse("^1.2.3-beta.1", Ecosystem::Npm).unwrap();
     assert!(range.contains(Ecosystem::Npm, "1.2.3-beta.1").unwrap());
     assert!(!range.contains(Ecosystem::Npm, "1.2.4-beta.1").unwrap());
-    let range = crate::ranges::RangeSet::parse(">=1.0.0").unwrap();
+    let range = crate::ranges::RangeSet::parse(">=1.0.0", Ecosystem::Npm).unwrap();
     assert!(!range.contains(Ecosystem::Npm, "1.1.0-alpha").unwrap());
     assert!(range.contains_bounds(Ecosystem::Npm, "1.1.0-alpha").unwrap());
 }

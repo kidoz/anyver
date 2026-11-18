@@ -4,8 +4,12 @@
 //! translates arguments and errors.
 
 use crate::parser::Ecosystem;
-use crate::strategies::{compare_for_ecosystem, parse_for_ecosystem};
+use crate::strategies::{
+    SemVer, cmp_semver_strict, compare_for_ecosystem, compatible_upper_bound, parse_for_ecosystem,
+    parse_semver_strict,
+};
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RangeOp {
@@ -15,6 +19,27 @@ pub(crate) enum RangeOp {
     Le,
     Eq,
     Ne,
+}
+
+impl RangeOp {
+    fn from_lower(inclusive: bool) -> Self {
+        if inclusive { Self::Ge } else { Self::Gt }
+    }
+
+    fn from_upper(inclusive: bool) -> Self {
+        if inclusive { Self::Le } else { Self::Lt }
+    }
+
+    fn matches(self, ordering: Ordering) -> bool {
+        match self {
+            Self::Gt => ordering.is_gt(),
+            Self::Ge => !ordering.is_lt(),
+            Self::Lt => ordering.is_lt(),
+            Self::Le => !ordering.is_gt(),
+            Self::Eq => ordering.is_eq(),
+            Self::Ne => !ordering.is_eq(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +61,7 @@ struct Interval {
     not_equals: Vec<String>,
 }
 
-fn cmp_versions(ecosystem: Ecosystem, a: &str, b: &str) -> Result<Ordering, String> {
+pub(crate) fn cmp_versions(ecosystem: Ecosystem, a: &str, b: &str) -> Result<Ordering, String> {
     let pa = parse_for_ecosystem(ecosystem, a)?;
     let pb = parse_for_ecosystem(ecosystem, b)?;
     Ok(compare_for_ecosystem(ecosystem, &pa, &pb))
@@ -112,7 +137,8 @@ fn parse_comparator(token: &str) -> Result<Comparator, String> {
 }
 
 fn has_wildcard(token: &str) -> bool {
-    token.contains(".x") || token.contains(".X") || token.contains(".*")
+    let core = token.split(['-', '+']).next().unwrap_or_default();
+    core.split('.').take(3).any(|part| matches!(part, "x" | "X" | "*"))
 }
 
 /// Resolve an operator applied to a wildcarded version (`>=1.2.x`, `<=2.x`).
@@ -124,8 +150,14 @@ fn expand_operator_wildcard(op: RangeOp, rest: &str) -> Result<Vec<Comparator>, 
     let (parts, depth) =
         parse_num_prefix(rest).ok_or_else(|| format!("invalid wildcard range: '{rest}'"))?;
     if depth == 0 {
-        // A bare `>=x` constrains nothing.
-        return Ok(Vec::new());
+        return match op {
+            RangeOp::Eq | RangeOp::Ge | RangeOp::Le => Ok(Vec::new()),
+            RangeOp::Lt | RangeOp::Gt => Ok(vec![
+                Comparator { op: RangeOp::Ge, version: "0.0.0".into() },
+                Comparator { op: RangeOp::Lt, version: "0.0.0".into() },
+            ]),
+            RangeOp::Ne => Err(format!("'!=' does not support wildcard versions: '!={rest}'")),
+        };
     }
     let major = *parts.first().unwrap_or(&0);
     let minor = *parts.get(1).unwrap_or(&0);
@@ -231,21 +263,21 @@ fn expand_interval(token: &str) -> Result<Vec<Comparator>, String> {
     let lower = parts[0].trim();
     if !lower.is_empty() {
         out.push(Comparator {
-            op: if left_inclusive { RangeOp::Ge } else { RangeOp::Gt },
+            op: RangeOp::from_lower(left_inclusive),
             version: lower.to_string(),
         });
     }
     let upper = parts[1].trim();
     if !upper.is_empty() {
         out.push(Comparator {
-            op: if right_inclusive { RangeOp::Le } else { RangeOp::Lt },
+            op: RangeOp::from_upper(right_inclusive),
             version: upper.to_string(),
         });
     }
     Ok(out)
 }
 
-fn expand_token(token: &str) -> Result<Vec<Comparator>, String> {
+fn expand_token(token: &str, ecosystem: Ecosystem) -> Result<Vec<Comparator>, String> {
     let t = token.trim();
     if t.is_empty() {
         return Ok(Vec::new());
@@ -272,6 +304,12 @@ fn expand_token(token: &str) -> Result<Vec<Comparator>, String> {
         return expand_tilde(rest);
     }
     if let Some(rest) = t.strip_prefix("~=") {
+        if ecosystem == Ecosystem::Pep440 {
+            return Ok(vec![
+                Comparator { op: RangeOp::Ge, version: rest.to_string() },
+                Comparator { op: RangeOp::Lt, version: compatible_upper_bound(rest)? },
+            ]);
+        }
         return expand_tilde(rest);
     }
     if let Some(rest) = t.strip_prefix('~') {
@@ -327,7 +365,9 @@ fn split_branch(branch: &str) -> Vec<String> {
     let mut merged = Vec::with_capacity(out.len());
     let mut i = 0usize;
     while i < out.len() {
-        if matches!(out[i].as_str(), ">=" | "<=" | "!=" | "==" | ">" | "<") && i + 1 < out.len() {
+        if matches!(out[i].as_str(), ">=" | "<=" | "!=" | "==" | "~=" | ">" | "<")
+            && i + 1 < out.len()
+        {
             merged.push(format!("{}{}", out[i], out[i + 1]));
             i += 2;
         } else {
@@ -339,7 +379,7 @@ fn split_branch(branch: &str) -> Vec<String> {
 }
 
 impl RangeSet {
-    pub(crate) fn parse(input: &str) -> Result<Self, String> {
+    pub(crate) fn parse(input: &str, ecosystem: Ecosystem) -> Result<Self, String> {
         let mut branches = Vec::new();
         for branch in input.split("||") {
             let tokens = split_branch(branch);
@@ -353,7 +393,7 @@ impl RangeSet {
             }
             let mut clauses = Vec::new();
             for token in tokens {
-                clauses.extend(expand_token(&token)?);
+                clauses.extend(expand_token(&token, ecosystem)?);
             }
             branches.push(clauses);
         }
@@ -361,28 +401,17 @@ impl RangeSet {
     }
 
     pub(crate) fn contains(&self, ecosystem: Ecosystem, version: &str) -> Result<bool, String> {
-        let target = parse_for_ecosystem(ecosystem, version)?;
-        for branch in &self.branches {
-            if ecosystem == Ecosystem::Npm
-                && let crate::strategies::ParsedRepr::Semver(target) = &target
-                && target.pre.is_some()
-            {
-                let mut admitted = false;
-                for clause in branch {
-                    if clause.op != RangeOp::Ne
-                        && let crate::strategies::ParsedRepr::Semver(bound) =
-                            parse_for_ecosystem(ecosystem, &clause.version)?
-                        && bound.pre.is_some()
-                        && (target.major, target.minor, target.patch)
-                            == (bound.major, bound.minor, bound.patch)
-                    {
-                        admitted = true;
-                    }
-                }
-                if !admitted {
-                    continue;
+        if ecosystem == Ecosystem::Npm {
+            let target = parse_semver_strict(version)?;
+            for branch in &self.branches {
+                if NpmBranch::parse(branch)?.contains(&target) {
+                    return Ok(true);
                 }
             }
+            return Ok(false);
+        }
+        parse_for_ecosystem(ecosystem, version)?;
+        for branch in &self.branches {
             if branch_contains(ecosystem, version, branch)? {
                 return Ok(true);
             }
@@ -424,15 +453,7 @@ fn branch_contains(
 ) -> Result<bool, String> {
     for clause in branch {
         let ord = cmp_versions(ecosystem, version, &clause.version)?;
-        let matched = match clause.op {
-            RangeOp::Gt => ord == Ordering::Greater,
-            RangeOp::Ge => ord != Ordering::Less,
-            RangeOp::Lt => ord == Ordering::Less,
-            RangeOp::Le => ord != Ordering::Greater,
-            RangeOp::Eq => ord == Ordering::Equal,
-            RangeOp::Ne => ord != Ordering::Equal,
-        };
-        if !matched {
+        if !clause.op.matches(ord) {
             return Ok(false);
         }
     }
@@ -470,11 +491,110 @@ fn version_in_branch(
     RangeSet { branches: vec![branch.to_vec()] }.contains(ecosystem, version)
 }
 
+/// An npm AND-branch admits prereleases only on cores mentioned by one
+/// of its own positive comparators. Keep that rule when intersecting branches.
+#[derive(Default)]
+struct NpmBranch {
+    lower: Option<(SemVer, bool)>,
+    upper: Option<(SemVer, bool)>,
+    excluded: HashSet<SemVer>,
+    prerelease_cores: HashSet<(u64, u64, u64)>,
+}
+
+impl NpmBranch {
+    fn parse(branch: &[Comparator]) -> Result<Self, String> {
+        let mut bounds = Self::default();
+        for clause in branch {
+            let value = parse_semver_strict(&clause.version)?;
+            let op = clause.op;
+            if value.pre.is_some() && op != RangeOp::Ne {
+                bounds.prerelease_cores.insert(value.core());
+            }
+            if matches!(op, RangeOp::Gt | RangeOp::Ge | RangeOp::Eq) {
+                Self::tighten(&mut bounds.lower, &value, op != RangeOp::Gt, Ordering::Greater);
+            }
+            if matches!(op, RangeOp::Lt | RangeOp::Le | RangeOp::Eq) {
+                Self::tighten(&mut bounds.upper, &value, op != RangeOp::Lt, Ordering::Less);
+            }
+            if op == RangeOp::Ne {
+                bounds.excluded.insert(value);
+            }
+        }
+        Ok(bounds)
+    }
+
+    fn tighten(
+        bound: &mut Option<(SemVer, bool)>,
+        value: &SemVer,
+        inclusive: bool,
+        tighter: Ordering,
+    ) {
+        if let Some((previous, was_inclusive)) = bound {
+            let ordering = cmp_semver_strict(value, previous);
+            if ordering.is_eq() {
+                *was_inclusive &= inclusive;
+            }
+            if ordering != tighter {
+                return;
+            }
+        }
+        *bound = Some((value.clone(), inclusive));
+    }
+
+    fn contains(&self, target: &SemVer) -> bool {
+        self.lower.as_ref().is_none_or(|(v, inclusive)| {
+            RangeOp::from_lower(*inclusive).matches(cmp_semver_strict(target, v))
+        }) && self.upper.as_ref().is_none_or(|(v, inclusive)| {
+            RangeOp::from_upper(*inclusive).matches(cmp_semver_strict(target, v))
+        }) && !self.excluded.contains(target)
+            && (target.pre.is_none() || self.prerelease_cores.contains(&target.core()))
+    }
+
+    fn intersects(&self, other: &Self) -> bool {
+        let accepts = |v: &SemVer| self.contains(v) && other.contains(v);
+        if accepts(&SemVer::release(0, 0, 0)) {
+            return true;
+        }
+        for &(major, minor, patch) in self.prerelease_cores.intersection(&other.prerelease_cores) {
+            if accepts(&SemVer { pre: Some("0".into()), ..SemVer::release(major, minor, patch) }) {
+                return true;
+            }
+        }
+        // Any remaining first match is a lower endpoint, the stable release
+        // of its core, or the successor of a strict endpoint or exclusion.
+        // Within a prerelease core the immediate successor of p is p.0.
+        for branch in [self, other] {
+            let endpoints = branch.lower.iter().map(|(v, _)| v).chain(&branch.excluded);
+            for v in endpoints {
+                let (major, minor, patch) = v.core();
+                if accepts(v) || accepts(&SemVer::release(major, minor, patch)) {
+                    return true;
+                }
+                let next = if let Some(pre) = &v.pre {
+                    Some(SemVer {
+                        pre: Some(format!("{pre}.0")),
+                        ..SemVer::release(major, minor, patch)
+                    })
+                } else {
+                    v.next_release()
+                };
+                if next.is_some_and(|v| accepts(&v)) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
 fn branches_intersect(
     ecosystem: Ecosystem,
     left: &[Comparator],
     right: &[Comparator],
 ) -> Result<bool, String> {
+    if ecosystem == Ecosystem::Npm {
+        return Ok(NpmBranch::parse(left)?.intersects(&NpmBranch::parse(right)?));
+    }
     let li = interval_for(ecosystem, left)?;
     let ri = interval_for(ecosystem, right)?;
     for eq in &li.equals {
