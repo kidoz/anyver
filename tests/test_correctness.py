@@ -205,6 +205,52 @@ def test_sort_keys_match_all_pairwise_comparisons(eco, values):
         assert (left == right) == (ka == kb)
 
 
+@pytest.mark.parametrize(
+    ("ecosystem", "lower", "upper"),
+    [
+        ("generic", "1.9", "1.10"),
+        ("semver", "1.0.0-1", "1.0.0-alpha"),
+        ("npm", "1.0.0-rc.2", "1.0.0-rc.10"),
+        ("pep440", "1.0+linux.2", "1.0+linux.10"),
+        ("debian", "1:1.0+deb1-2", "1:1.0+deb1-10"),
+        ("rpm", "1.0^git1-1", "1.0.1-1"),
+        ("ruby", "1.0.pre", "1.0"),
+        ("maven", "1.0-SNAPSHOT", "1.0"),
+        ("go", "v1.0.0-rc.1", "v1.0.0"),
+        ("nuget", "1.0.0.2", "1.0.0.10"),
+        ("composer", "v1.0-beta", "v1.0"),
+        ("crates", "1.0.0-alpha", "1.0.0"),
+        ("hex", "1.0.0-rc.2", "1.0.0-rc.10"),
+        ("swift", "1.0.0-beta", "1.0.0"),
+        ("calver", "2024.09", "2024.10"),
+        ("alpine", "1.0-r2", "1.0-r10"),
+        ("docker", "latest", "stable"),
+        ("conda", "1.0", "1.1"),
+        ("arch", "1:1.0-2", "2:1.0-1"),
+        ("gentoo", "1.0_alpha", "1.0"),
+        ("cran", "1.0-2", "1.0-10"),
+        ("spack", "1.9", "1.10"),
+        ("dart", "1.0.0-dev.2", "1.0.0"),
+        ("julia", "1.0.0-rc1", "1.0.0"),
+        ("terraform", "1.9.0", "1.10.0"),
+        ("helm", "1.0.0-beta.2", "1.0.0"),
+        ("cpan", "v1.2.9", "v1.2.10"),
+        ("nix", "23.11", "24.05"),
+        ("homebrew", "1.0_2", "1.0_10"),
+        ("freebsd", "1.0_2", "1.0_10"),
+        ("hackage", "1.2", "1.2.0"),
+        ("jdk", "21.0.1+9", "21.0.1+10"),
+    ],
+)
+def test_registered_ecosystem_entry_points(ecosystem, lower, upper):
+    left, right = Version(lower, ecosystem=ecosystem), Version(upper, ecosystem=ecosystem)
+    assert left.ecosystem == right.ecosystem == ecosystem
+    assert left < right
+    assert left.sort_key() < right.sort_key()
+    assert anyver.compare(left, right, ecosystem=ecosystem) == -1
+    assert anyver.sort_versions([upper, lower], ecosystem=ecosystem) == [lower, upper]
+
+
 def test_hackage_dotted_versions_preserve_precision():
     assert Version("1.2.0", ecosystem="Cabal").release() == (1, 2, 0)
     assert len({Version(value, ecosystem="hackage") for value in ["1.2", "1.2.0"]}) == 2
@@ -217,6 +263,48 @@ def test_hackage_dotted_versions_preserve_precision():
     assert anyver.satisfies("1.2.0", ">1.2,<1.2.1", ecosystem="hackage")
     for value in ["", "v1.2", "1..2", "1.02", "1.2-rc1", "1.2+3"]:
         assert Version.try_parse(value, ecosystem="hackage") is None
+
+
+def test_jdk_runtime_precedence_and_stability():
+    ordered = [
+        "21-2",
+        "21-10",
+        "21-184467440737095516160",
+        "21-EA",
+        "21-ea",
+        "21-ea+10",
+        "21",
+        "21+-vendor",
+        "21+0",
+        "21+2",
+        "21+10",
+        "21+10-LTS",
+        "21+10-vendor",
+        "21.0.1",
+    ]
+    versions = [Version(value, ecosystem="openjdk") for value in ordered]
+    for left, right in zip(versions, versions[1:], strict=False):
+        assert left < right
+        assert left.sort_key() < right.sort_key()
+    equal = Version("21-002", ecosystem="jdk")
+    assert versions[0] == equal
+    assert hash(versions[0]) == hash(equal)
+    assert versions[0].sort_key() == equal.sort_key()
+    assert equal.release() == (21,)
+    assert equal.minor == 0
+    assert equal.is_prerelease
+    assert Version("21+-ea", ecosystem="jdk").is_stable
+    assert Version("21+10-LTS", ecosystem="java-runtime").build == "10-LTS"
+    assert anyver.latest_stable(["21+10", "22-ea"], ecosystem="jdk") == "21+10"
+    assert anyver.satisfies("21+10", ">=21+9,<21.0.1", ecosystem="jdk")
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["0", "21.0", "21.01", "21+", "21-ea+-vendor", "21+01", "21--vendor", "21+2147483648"],
+)
+def test_jdk_rejects_invalid_runtime_versions(value):
+    assert Version.try_parse(value, ecosystem="jdk") is None
 
 
 def test_maven_sort_key_breaks_only_the_cycle_edge():

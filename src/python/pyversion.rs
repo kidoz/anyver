@@ -55,6 +55,7 @@ fn version_key(version: &PyVersion) -> Vec<(i32, u64, String)> {
         ParsedRepr::Rpm(v) => v.sort_key(),
         ParsedRepr::Maven(v) => v.sort_key(),
         ParsedRepr::Hackage(v) => v.iter().map(|&part| (0, part, String::new())).collect(),
+        ParsedRepr::Jdk(v) => v.sort_key(),
     }
 }
 
@@ -71,18 +72,22 @@ impl PyVersion {
     #[new]
     #[pyo3(signature = (version, ecosystem = "auto"))]
     pub(crate) fn new(version: &str, ecosystem: &str) -> PyResult<Self> {
-        let inner = parse(version);
         let (eco, repr) = if ecosystem.eq_ignore_ascii_case("auto") {
             let detected = autodetect_ecosystem(version);
             // Auto-detection: fall back to generic if ecosystem parse fails
             match parse_for_ecosystem(detected, version) {
                 Ok(r) => (detected, r),
-                Err(_) => (Ecosystem::Generic, ParsedRepr::Generic(inner.clone())),
+                Err(_) => (Ecosystem::Generic, ParsedRepr::Generic(parse(version))),
             }
         } else {
             let eco = eco_from_str(ecosystem)?;
             let repr = parse_for_ecosystem(eco, version).map_err(PyValueError::new_err)?;
             (eco, repr)
+        };
+        let inner = match &repr {
+            ParsedRepr::Generic(parsed) => parsed.clone(),
+            ParsedRepr::Jdk(parsed) => parsed.version_view(version),
+            _ => parse(version),
         };
         Ok(PyVersion { inner, eco, repr })
     }

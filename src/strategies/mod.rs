@@ -10,6 +10,7 @@
 //! - [`rpm`]        — RPM `rpmvercmp`
 //! - [`maven`]      — Apache Maven `ComparableVersion`
 //! - `hackage`      — dotted numeric package versions
+//! - `jdk`          — Java runtime version strings
 //! - [`validators`] — per-ecosystem input preconditions
 //! - [`registry`]   — `VersionStrategy` trait, `ParsedRepr`, ecosystem dispatch
 //!
@@ -22,6 +23,7 @@
 mod debian;
 mod generic;
 mod hackage;
+mod jdk;
 mod maven;
 mod pep440;
 mod registry;
