@@ -82,12 +82,8 @@ pub(crate) fn validate_prerelease(pre: &str) -> Result<(), String> {
         if !ident.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
             return Err(format!("invalid character in prerelease identifier: '{ident}'"));
         }
-        let is_numeric = ident.bytes().all(|b| b.is_ascii_digit());
-        if is_numeric && ident.len() > 1 && ident.starts_with('0') {
+        if is_numeric_identifier(ident) && ident.len() > 1 && ident.starts_with('0') {
             return Err(format!("leading zero in numeric prerelease identifier: '{ident}'"));
-        }
-        if is_numeric && ident.parse::<u64>().is_err() {
-            return Err(format!("numeric prerelease identifier out of range for u64: '{ident}'"));
         }
     }
     Ok(())
@@ -143,20 +139,19 @@ pub(crate) fn cmp_semver_strict(left: &SemVer, right: &SemVer) -> Ordering {
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,
         (Some(lp), Some(rp)) => {
-            let left_parts: Vec<&str> = lp.split('.').collect();
-            let right_parts: Vec<&str> = rp.split('.').collect();
-            let count = left_parts.len().max(right_parts.len());
-            for i in 0..count {
-                match (left_parts.get(i), right_parts.get(i)) {
+            let mut left_parts = lp.split('.');
+            let mut right_parts = rp.split('.');
+            loop {
+                match (left_parts.next(), right_parts.next()) {
                     (None, Some(_)) => return Ordering::Less,
                     (Some(_), None) => return Ordering::Greater,
                     (None, None) => return Ordering::Equal,
                     (Some(lv), Some(rv)) => {
-                        let ord = match (lv.parse::<u64>(), rv.parse::<u64>()) {
-                            (Ok(ln), Ok(rn)) => ln.cmp(&rn),
-                            (Ok(_), Err(_)) => Ordering::Less,
-                            (Err(_), Ok(_)) => Ordering::Greater,
-                            (Err(_), Err(_)) => lv.cmp(rv),
+                        let ord = match (is_numeric_identifier(lv), is_numeric_identifier(rv)) {
+                            (true, true) => lv.len().cmp(&rv.len()).then_with(|| lv.cmp(rv)),
+                            (true, false) => Ordering::Less,
+                            (false, true) => Ordering::Greater,
+                            (false, false) => lv.cmp(rv),
                         };
                         if ord != Ordering::Equal {
                             return ord;
@@ -164,7 +159,6 @@ pub(crate) fn cmp_semver_strict(left: &SemVer, right: &SemVer) -> Ordering {
                     }
                 }
             }
-            Ordering::Equal
         }
     }
 }

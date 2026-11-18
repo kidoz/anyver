@@ -307,6 +307,20 @@ def test_jdk_rejects_invalid_runtime_versions(value):
     assert Version.try_parse(value, ecosystem="jdk") is None
 
 
+def test_semver_large_numeric_prereleases():
+    ordered = [
+        "1.0.0-18446744073709551615",
+        "1.0.0-18446744073709551616",
+        "1.0.0-100000000000000000000",
+        "1.0.0-alpha",
+        "1.0.0",
+    ]
+    for lower, upper in zip(ordered, ordered[1:], strict=False):
+        assert anyver.compare_semver_strict(lower, upper) == -1
+        assert Version(lower, "semver").sort_key() < Version(upper, "semver").sort_key()
+    assert Version("1.0.0-1", "semver").release() == (1, 0, 0)
+
+
 def test_nuget_uses_case_insensitive_version_release_precedence():
     assert anyver.compare("1.2.3-1", "1.2.3-alpha", "nuget") == -1
     assert anyver.compare("1.2.3-rc", "1.2.3-rc.0", "nuget") == -1

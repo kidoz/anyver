@@ -219,10 +219,15 @@ impl PyVersion {
     }
 
     fn release<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let release_len = match &self.repr {
+            ParsedRepr::Semver(_) => 3,
+            _ => self.inner.segments.len(),
+        };
         let nums: Vec<Bound<'py, PyAny>> = self
             .inner
             .segments
             .iter()
+            .take(release_len)
             .take_while(|s| matches!(s, Seg::Num(_)))
             .map(|s| s.to_py(py))
             .collect();
