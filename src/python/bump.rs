@@ -1,50 +1,31 @@
 //! Version-bumping helpers exposed to Python: `bump_major`/`bump_minor`/
 //! `bump_patch`, `bump_prerelease`, and `next_stable`.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::parser::{ParsedVersion, Seg, parse};
 
-#[pyfunction]
-pub(crate) fn bump_major(version: &str) -> String {
-    let v = parse(version);
-    let major = match v.segments.first() {
-        Some(Seg::Num(n)) => n + 1,
-        _ => 1,
-    };
-    format!("{major}.0.0")
+fn increment(value: u64) -> PyResult<u64> {
+    value.checked_add(1).ok_or_else(|| PyValueError::new_err("version increment exceeds u64"))
 }
 
 #[pyfunction]
-pub(crate) fn bump_minor(version: &str) -> String {
-    let v = parse(version);
-    let major = match v.segments.first() {
-        Some(Seg::Num(n)) => *n,
-        _ => 0,
-    };
-    let minor = match v.segments.get(1) {
-        Some(Seg::Num(n)) => n + 1,
-        _ => 1,
-    };
-    format!("{major}.{minor}.0")
+pub(crate) fn bump_major(version: &str) -> PyResult<String> {
+    let (major, _, _) = release_triple(&parse(version));
+    Ok(format!("{}.0.0", increment(major)?))
 }
 
 #[pyfunction]
-pub(crate) fn bump_patch(version: &str) -> String {
-    let v = parse(version);
-    let major = match v.segments.first() {
-        Some(Seg::Num(n)) => *n,
-        _ => 0,
-    };
-    let minor = match v.segments.get(1) {
-        Some(Seg::Num(n)) => *n,
-        _ => 0,
-    };
-    let patch = match v.segments.get(2) {
-        Some(Seg::Num(n)) => n + 1,
-        _ => 1,
-    };
-    format!("{major}.{minor}.{patch}")
+pub(crate) fn bump_minor(version: &str) -> PyResult<String> {
+    let (major, minor, _) = release_triple(&parse(version));
+    Ok(format!("{major}.{}.0", increment(minor)?))
+}
+
+#[pyfunction]
+pub(crate) fn bump_patch(version: &str) -> PyResult<String> {
+    let (major, minor, patch) = release_triple(&parse(version));
+    Ok(format!("{major}.{minor}.{}", increment(patch)?))
 }
 
 fn release_triple(v: &ParsedVersion) -> (u64, u64, u64) {
@@ -72,7 +53,7 @@ fn release_triple(v: &ParsedVersion) -> (u64, u64, u64) {
 ///   - If no release triple is present, it's filled with `0.0.0`.
 #[pyfunction]
 #[pyo3(signature = (version, tag = "alpha"))]
-pub(crate) fn bump_prerelease(version: &str, tag: &str) -> String {
+pub(crate) fn bump_prerelease(version: &str, tag: &str) -> PyResult<String> {
     let v = parse(version);
     let (major, minor, patch) = release_triple(&v);
     let tag_lower = tag.to_ascii_lowercase();
@@ -87,10 +68,10 @@ pub(crate) fn bump_prerelease(version: &str, tag: &str) -> String {
             Seg::Num(n) => Some(*n),
             Seg::Text(_) => None,
         });
-        let n = next_num.map_or(0, |n| n + 1);
-        return format!("{major}.{minor}.{patch}-{tag_lower}.{n}");
+        let n = next_num.map(increment).transpose()?.unwrap_or(0);
+        return Ok(format!("{major}.{minor}.{patch}-{tag_lower}.{n}"));
     }
-    format!("{major}.{minor}.{patch}-{tag_lower}.0")
+    Ok(format!("{major}.{minor}.{patch}-{tag_lower}.0"))
 }
 
 /// Return the release form of a version, stripping any prerelease/postrelease

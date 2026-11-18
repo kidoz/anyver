@@ -414,3 +414,19 @@ def test_maven_collection_order_is_independent_of_input_order():
         assert anyver.max_version(order, "maven") == values[-1]
         assert anyver.latest_stable(order, "maven") == values[-1]
     assert anyver.compare(values[-1], values[0], "maven") < 0
+
+
+@pytest.mark.parametrize(
+    "bump,template",
+    [
+        (anyver.bump_major, "{}.0.0"),
+        (anyver.bump_minor, "1.{}.0"),
+        (anyver.bump_patch, "1.0.{}"),
+        (anyver.bump_prerelease, "1.0.0-alpha.{}"),
+    ],
+)
+def test_bump_overflow_is_an_error(bump, template):
+    limit = 2**64 - 1
+    assert bump(template.format(limit - 1)) == template.format(limit)
+    with pytest.raises(ValueError, match="exceeds u64"):
+        bump(template.format(limit))
