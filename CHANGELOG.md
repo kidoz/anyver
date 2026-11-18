@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Added Hackage/Cabal package versions and Java 9+ JDK runtime version ordering.
 - Fixed exact range matching for SemVer suffixes containing `.x`, PEP 440
   compatible-release bounds, and npm intersections with no admissible version.
 - Applied exclusive OSV limits to all affected windows in each range.

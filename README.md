@@ -7,7 +7,7 @@
 
 A high-performance Python library (written in Rust via PyO3) for parsing and comparing software version strings across all major package ecosystems.
 
-Handles: **SemVer, PEP 440, npm, Go modules, Debian/dpkg, RPM, Ruby Gems, Maven, NuGet, Composer, Crates.io, Hex, Swift PM, CalVer, Alpine, Docker, Conda, Arch/pacman, Gentoo/Portage, R/CRAN, Spack, Dart pub, Julia Pkg, Terraform/OpenTofu, Helm, CPAN, Nix, Homebrew, FreeBSD pkg** — with a single generic parser, ecosystem-specific modes, range helpers, and security-interoperability utilities.
+Handles: **SemVer, PEP 440, npm, Go modules, Debian/dpkg, RPM, Ruby Gems, Maven, NuGet, Composer, Crates.io, Hex, Swift PM, CalVer, Alpine, Docker, Conda, Arch/pacman, Gentoo/Portage, R/CRAN, Spack, Dart pub, Julia Pkg, Terraform/OpenTofu, Helm, CPAN, Nix, Homebrew, FreeBSD pkg, Hackage/Cabal, JDK runtime versions** — with a single generic parser, ecosystem-specific modes, range helpers, and security-interoperability utilities.
 
 ## Installation
 
@@ -240,14 +240,34 @@ anyver.compare("1!0.1", "2.0", ecosystem="pep440")     # 1
 # calver, alpine/apk, docker/oci,
 # conda/mamba, arch/pacman, gentoo/portage, cran/r,
 # spack, dart/pub/flutter, julia, terraform/opentofu, helm,
-# cpan/perl, nix/nixpkgs, homebrew/brew, freebsd/freebsd-pkg
+# cpan/perl, nix/nixpkgs, homebrew/brew, freebsd/freebsd-pkg,
+# hackage/cabal, jdk/openjdk/java-runtime
 ```
 
-The mature exact-native comparators are Debian/dpkg, RPM, Maven
-(`ComparableVersion`), strict SemVer-family modes, and PEP 440 public and local-version
-handling. Newer ecosystem modes start with validation plus generic or
-SemVer-compatible ordering where their native algorithm is not yet fully
-specialized.
+| Comparison used | Ecosystem modes |
+| --- | --- |
+| Dedicated ordering | `pep440`, `debian`, `rpm`, `maven`, `hackage`, `jdk` |
+| Strict SemVer precedence | `semver`, `npm`, `go`, `crates`, `hex`, `swift`, `dart`, `julia`, `helm` |
+| Generic ordering | `generic`, `ruby`, `nuget`, `composer`, `calver`, `alpine`, `docker`, `conda`, `arch`, `gentoo`, `cran`, `spack`, `terraform`, `cpan`, `nix`, `homebrew`, `freebsd` |
+
+The SemVer row describes comparison of concrete versions. Range rules and
+build metadata precedence can differ across package managers. The generic
+modes use anyver's segment ordering with basic ecosystem validation. For
+example, Alpine's native ordering of package revisions differs from the
+generic ordering.
+
+Select `hackage` or `jdk` explicitly when the source is known:
+
+```python
+anyver.compare("1.2", "1.2.0", ecosystem="hackage")       # -1
+anyver.compare("21.0.1+9", "21.0.1+10", ecosystem="jdk") # -1
+```
+
+Hackage compares dotted unsigned 64-bit components left to right and keeps
+trailing zeros significant. JDK mode supports Java 9+ runtime strings and follows
+`Runtime.Version.compareTo`, including numeric build numbers and
+case-sensitive optional build information. JDK mode accepts `21-ea+10` and
+`21.0.1+12-LTS` and rejects legacy Java 8 strings such as `1.8.0_402`.
 
 ## Database Integration
 
@@ -277,7 +297,8 @@ Version("1.2.3-rc.1").sort_key()
 ```
 
 > **Scope:** keys order versions within a single ecosystem. Debian, RPM,
-> generic, strict SemVer-family, and PEP 440 keys reproduce comparison.
+> generic, strict SemVer-family, PEP 440, Hackage, and JDK keys reproduce
+> comparison.
 > Compare keys only from the same ecosystem. Numeric values retain their full
 > precision, including Debian/RPM digit runs wider than `u64` and Maven's
 > arbitrary-precision numbers. The tuple shape is experimental; regenerate
