@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 
 use super::debian::{DebianVersion, cmp_debian, parse_debian};
 use super::generic::cmp_parsed;
+use super::hackage::parse_hackage;
 use super::maven::{MavenVersion, cmp_maven, parse_maven};
 use super::pep440::{Pep440Version, cmp_pep440, parse_pep440};
 use super::rpm::{RpmVersion, cmp_rpm, parse_rpm};
@@ -27,6 +28,7 @@ pub(crate) enum ParsedRepr {
     Rpm(RpmVersion),
     Pep440(Pep440Version),
     Maven(MavenVersion),
+    Hackage(Vec<u64>),
 }
 
 impl ParsedRepr {
@@ -115,6 +117,7 @@ pub(crate) struct CpanStrategy;
 pub(crate) struct NixStrategy;
 pub(crate) struct HomebrewStrategy;
 pub(crate) struct FreebsdStrategy;
+pub(crate) struct HackageStrategy;
 
 // Generic strategy — no validation
 impl VersionStrategy for GenericStrategy {
@@ -210,6 +213,18 @@ impl VersionStrategy for MavenStrategy {
     }
 }
 
+impl VersionStrategy for HackageStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        parse_hackage(input).map(ParsedRepr::Hackage)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Hackage(a), ParsedRepr::Hackage(b)) => a.cmp(b),
+            _ => unreachable!(),
+        }
+    }
+}
+
 // Validate→generic ecosystems
 impl_generic_strategy!(RubyStrategy, validate_ruby);
 impl_generic_strategy!(NugetStrategy, validate_nuget);
@@ -257,6 +272,7 @@ static CPAN_STRATEGY: CpanStrategy = CpanStrategy;
 static NIX_STRATEGY: NixStrategy = NixStrategy;
 static HOMEBREW_STRATEGY: HomebrewStrategy = HomebrewStrategy;
 static FREEBSD_STRATEGY: FreebsdStrategy = FreebsdStrategy;
+static HACKAGE_STRATEGY: HackageStrategy = HackageStrategy;
 
 pub(crate) fn strategy_for(ecosystem: Ecosystem) -> &'static dyn VersionStrategy {
     match ecosystem {
@@ -289,6 +305,7 @@ pub(crate) fn strategy_for(ecosystem: Ecosystem) -> &'static dyn VersionStrategy
         Ecosystem::Nix => &NIX_STRATEGY,
         Ecosystem::Homebrew => &HOMEBREW_STRATEGY,
         Ecosystem::Freebsd => &FREEBSD_STRATEGY,
+        Ecosystem::Hackage => &HACKAGE_STRATEGY,
     }
 }
 

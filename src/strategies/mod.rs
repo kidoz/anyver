@@ -9,6 +9,7 @@
 //! - [`debian`]     — dpkg `verrevcmp` (and the shared epoch splitter)
 //! - [`rpm`]        — RPM `rpmvercmp`
 //! - [`maven`]      — Apache Maven `ComparableVersion`
+//! - `hackage`      — dotted numeric package versions
 //! - [`validators`] — per-ecosystem input preconditions
 //! - [`registry`]   — `VersionStrategy` trait, `ParsedRepr`, ecosystem dispatch
 //!
@@ -20,6 +21,7 @@
 
 mod debian;
 mod generic;
+mod hackage;
 mod maven;
 mod pep440;
 mod registry;

@@ -54,6 +54,7 @@ fn version_key(version: &PyVersion) -> Vec<(i32, u64, String)> {
         ParsedRepr::Debian(v) => v.sort_key(),
         ParsedRepr::Rpm(v) => v.sort_key(),
         ParsedRepr::Maven(v) => v.sort_key(),
+        ParsedRepr::Hackage(v) => v.iter().map(|&part| (0, part, String::new())).collect(),
     }
 }
 

@@ -205,6 +205,20 @@ def test_sort_keys_match_all_pairwise_comparisons(eco, values):
         assert (left == right) == (ka == kb)
 
 
+def test_hackage_dotted_versions_preserve_precision():
+    assert Version("1.2.0", ecosystem="Cabal").release() == (1, 2, 0)
+    assert len({Version(value, ecosystem="hackage") for value in ["1.2", "1.2.0"]}) == 2
+    assert anyver.sort_versions(["1.10", "1.2.1", "1.2.0", "1.2"], ecosystem="hackage") == [
+        "1.2",
+        "1.2.0",
+        "1.2.1",
+        "1.10",
+    ]
+    assert anyver.satisfies("1.2.0", ">1.2,<1.2.1", ecosystem="hackage")
+    for value in ["", "v1.2", "1..2", "1.02", "1.2-rc1", "1.2+3"]:
+        assert Version.try_parse(value, ecosystem="hackage") is None
+
+
 def test_maven_sort_key_breaks_only_the_cycle_edge():
     alpha = Version("1-foo-alpha", ecosystem="maven")
     release = Version("1-foo", ecosystem="maven")

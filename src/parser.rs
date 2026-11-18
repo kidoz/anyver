@@ -68,6 +68,7 @@ pub(crate) enum Ecosystem {
     Nix,
     Homebrew,
     Freebsd,
+    Hackage,
 }
 
 impl Ecosystem {
@@ -103,8 +104,9 @@ impl Ecosystem {
             "nix" | "nixpkgs" => Ok(Self::Nix),
             "homebrew" | "brew" => Ok(Self::Homebrew),
             "freebsd" | "freebsd-pkg" => Ok(Self::Freebsd),
+            "hackage" | "cabal" => Ok(Self::Hackage),
             other => Err(format!(
-                "unsupported ecosystem '{other}'; expected one of: generic, semver, pep440, debian, rpm, ruby, maven, go, npm, nuget, composer, crates, hex, swift, calver, alpine, docker, conda, arch, gentoo, cran, spack, dart, julia, terraform, helm, cpan, nix, homebrew, freebsd"
+                "unsupported ecosystem '{other}'; expected one of: generic, semver, pep440, debian, rpm, ruby, maven, go, npm, nuget, composer, crates, hex, swift, calver, alpine, docker, conda, arch, gentoo, cran, spack, dart, julia, terraform, helm, cpan, nix, homebrew, freebsd, hackage"
             )),
         }
     }
@@ -141,6 +143,7 @@ impl Ecosystem {
             Self::Nix => "nix",
             Self::Homebrew => "homebrew",
             Self::Freebsd => "freebsd",
+            Self::Hackage => "hackage",
         }
     }
 
