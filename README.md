@@ -454,11 +454,11 @@ Built in Rust for speed. Typical benchmarks (Apple M-series):
 
 `anyver` follows [Semantic Versioning](https://semver.org/).
 
-Version **2.0.0** changes stable comparison results and `Version` operators,
-rejects empty `satisfies()` ranges, and replaces generic Debian/RPM sort keys
-with native encodings. Maven `sort_key()` is a total order and can disagree
-with `compare()` when a qualifier meets a nested list. See the [2.0.0
-migration notes](CHANGELOG.md#200---2026-10-18) before upgrading from 1.2.0.
+Version **2.1.0** adds Hackage/Cabal and Java 9+ JDK runtime modes and
+dedicated ordering for NuGet, RubyGems, Alpine, Arch, CPAN, and Homebrew.
+Debian, Docker, and CRAN now reject malformed inputs, and stored sort keys for
+the corrected modes must be regenerated. See the [2.1.0 migration
+notes](CHANGELOG.md#210---2026-11-18) before upgrading from 2.0.0.
 
 The public API surface covered by SemVer guarantees:
 

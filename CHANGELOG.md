@@ -2,20 +2,55 @@
 
 ## [Unreleased]
 
-- Corrected ordering in NuGet, RubyGems, Alpine, Arch, CPAN, and Homebrew
-  formula revisions. RubyGems and Arch collection helpers use portable
-  total-order keys and pairwise comparisons preserve their native behavior.
-- SemVer accepts arbitrary-length numeric prerelease identifiers.
-- Debian, Docker, and CRAN reject malformed versions previously accepted.
-- These validation and ordering changes affect callers that relied on the
-  previous results. Regenerate stored keys for the corrected modes.
-- Added Hackage/Cabal package versions and Java 9+ JDK runtime version ordering.
-- Fixed exact range matching for SemVer suffixes containing `.x`, PEP 440
-  compatible-release bounds, and npm intersections with no admissible version.
-- Applied exclusive OSV limits to all affected windows in each range.
-- Aligned SemVer and PEP 440 stability flags with their native parsers.
-- Maven collection sorting and selection now use the portable total-order key.
+## [2.1.0] - 2026-11-18
+
+Minor release: Hackage/Cabal and Java 9+ JDK runtime versions join the
+ecosystem matrix, NuGet, RubyGems, Alpine, Arch, CPAN, and Homebrew gain
+dedicated ordering, and Debian, Docker, and CRAN reject malformed inputs
+previously accepted. Several ordering and validation results change; regenerate
+persisted sort keys for the corrected modes.
+
+### Added
+- Hackage/Cabal package versions (`hackage`/`cabal`): dotted unsigned 64-bit
+  components with significant trailing zeros.
+- Java 9+ JDK runtime versions (`jdk`/`openjdk`/`java-runtime`), ordered like
+  `Runtime.Version.compareTo`, including numeric build numbers and
+  case-sensitive optional build information.
+- SemVer accepts arbitrary-length numeric prerelease identifiers and compares
+  them numerically.
+
+### Changed
+- NuGet uses `VersionComparer.VersionRelease` precedence: case-insensitive
+  prerelease labels and ignored build metadata.
+- RubyGems uses `Gem::Version#<=>` ordering. Collection helpers use a portable
+  total-order key; pairwise comparison keeps the native behavior.
+- Alpine follows apk-tools 3 ordering, including commit suffixes and package
+  revisions. Arch follows pacman `vercmp` and uses a total-order key in the
+  collection helpers.
+- CPAN normalizes decimal and dotted forms and treats underscore developer
+  releases as prereleases.
+- Homebrew orders formula revisions after the upstream version.
+- SemVer and PEP 440 stability flags now agree with their native parsers, and
+  Maven collection sorting and selection use the portable total-order key.
+- Stored keys change for NuGet, RubyGems, Alpine, Arch, CPAN, and Homebrew;
+  regenerate persisted `sort_key()` values for those modes.
+
+### Fixed
+- Exact range matching no longer treats `.x` in a SemVer suffix as a wildcard.
+  PEP 440 compatible-release (`~=`) bounds follow PEP 440, and npm
+  intersections require a version admitted by both branches.
+- OSV `limit` events apply to the whole range, and any listed limit admits the
+  version.
+- Debian rejects malformed epochs, empty revisions, and whitespace; Docker
+  validates tag syntax; CRAN requires at least one separator and numeric
+  components within `u64`.
 - Bumping a component beyond `u64::MAX` raises `ValueError`.
+
+### Packaging
+- Refreshed `Cargo.lock`, raised the Python tool floors (maturin 1.16,
+  pytest 9.2, pytest-benchmark 5.3.1, ruff 0.17.5), pinned the publish
+  workflow actions to commit SHAs, and excluded local agents-update archives
+  from the sdist.
 
 ## [2.0.0] - 2026-10-18
 
