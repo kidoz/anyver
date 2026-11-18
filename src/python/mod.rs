@@ -29,8 +29,8 @@ pub(crate) use compare::compare_str_with_ecosystem;
 #[cfg(test)]
 pub(crate) use constraints::parse_constraint;
 
-#[pymodule]
-fn _anyver(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "_anyver")]
+fn anyver_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<pyversion::PyVersion>()?;
     m.add_function(wrap_pyfunction!(compare::version, m)?)?;
     m.add_function(wrap_pyfunction!(compare::compare, m)?)?;
