@@ -126,7 +126,7 @@ anyver.ranges_intersect(">=1.0,<2.0", ">=1.5,<3.0")  # True
 
 ## Stable Version Filtering
 
-Filter out pre-release versions or find the latest stable:
+The selected ecosystem determines stability. In SemVer mode, any prerelease suffix, including a numeric suffix such as `-1`, excludes the version from stable results.
 
 ```python
 anyver.stable_versions(["2.0.0-rc1", "1.0.0", "2.0.0", "1.5.0-beta"])
@@ -147,6 +147,8 @@ anyver.bump_patch("1.2.3")          # "1.2.4"
 anyver.bump_major("1.2.3-alpha")    # "2.0.0"
 anyver.bump_patch("1.0.0-rc1")     # "1.0.1"
 ```
+
+The bump helpers raise `ValueError` when incrementing a component would exceed `u64::MAX`.
 
 ## Hashable (Sets and Dicts)
 
@@ -288,6 +290,8 @@ Version("1.2.3-rc.1").sort_key()
 > against maven-artifact 3.10.0, `compare()` gives
 > `1-foo.sp-0 < 1-foo-alpha < 1-foo < 1-foo.sp-0`, while the key sorts
 > `1-foo-alpha < 1-foo < 1-foo.sp-0`. `compare()` keeps the native results.
+> In Maven mode, `sort_versions()`, `min_version()`, `max_version()`, and
+> `latest_stable()` use the same total order as `sort_key()`.
 > Hashes follow each ecosystem's equality rules, including native comparators.
 
 The Maven reference check is optional and runs offline against a local JAR
@@ -338,6 +342,8 @@ shorthand (`^1.2.3`, `~1.2`, `1.2.x`); VERS has no shorthand syntax.
 
 **OSV.** Each `introduced` → `fixed`/`last_affected` pair in a range is its own
 affected window, and a range with several pairs matches versions in any of them.
+An explicit `limit` caps the whole range. A version must precede at least one
+listed limit, and a limit of `*` admits every version to the window check.
 `type: "SEMVER"` always uses strict SemVer ordering, including for packages
 whose ecosystem normally uses another comparator. `type: "ECOSYSTEM"` uses
 the package ecosystem (or explicit override). OSV windows compare version
@@ -350,6 +356,9 @@ recognise falls back to the generic comparator rather than raising.
 **Ranges.** A blank range is an error, not a universal match — pass `*` to match
 every version. npm ranges admit prereleases only when that same AND branch
 explicitly references a prerelease on the same major/minor/patch tuple.
+An npm intersection requires a version admitted by both branches.
+Wildcards apply to complete release-number components. PEP 440 compatible-release bounds accept the usual optional `v` prefix.
+`~=1.4` accepts later 1.x releases, and `~=1.4.0` accepts later 1.4.x releases.
 Caret and tilde ranges preserve prerelease lower bounds. Pessimistic `~>1.2`
 means `>=1.2.0,<2.0.0`, while `~>1.2.3` means `>=1.2.3,<1.3.0`.
 An upper-bound increment beyond `u64::MAX` raises `ValueError`.

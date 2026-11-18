@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Fixed exact range matching for SemVer suffixes containing `.x`, PEP 440
+  compatible-release bounds, and npm intersections with no admissible version.
+- Applied exclusive OSV limits to all affected windows in each range.
+- Aligned SemVer and PEP 440 stability flags with their native parsers.
+- Maven collection sorting and selection now use the portable total-order key.
+- Bumping a component beyond `u64::MAX` raises `ValueError`.
+
 ## [2.0.0] - 2026-10-18
 
 Major release: changes to stable `Version` operators, comparison results,
