@@ -313,6 +313,31 @@ def test_exact_semver_suffix_is_not_a_wildcard(bound):
     assert anyver.satisfies("1.2.9", "1.2.x", "semver")
 
 
+def test_osv_limits_apply_to_the_whole_range():
+    events = [
+        {"introduced": "0"},
+        {"fixed": "1.0.0"},
+        {"introduced": "2.0.0"},
+        {"limit": "3.0.0"},
+        {"limit": "2.1.0"},
+    ]
+    record = {"ranges": [{"type": "SEMVER", "events": events}]}
+    for version, expected in [
+        ("0.9.0", True),
+        ("1.5.0", False),
+        ("2.9.9", True),
+        ("3.0.0", False),
+        ("3.1.0", False),
+    ]:
+        assert anyver.osv_affected(version, record) is expected
+    record["versions"] = ["3.1.0"]
+    assert anyver.osv_affected("3.1.0", record)
+    record["ranges"].append({"type": "SEMVER", "events": [{"introduced": "4.0.0"}]})
+    assert anyver.osv_affected("4.0.0", record)
+    events.insert(0, {"limit": "*"})
+    assert anyver.osv_affected("3.0.0", record)
+
+
 @pytest.mark.parametrize(
     "spec,target,expected",
     [

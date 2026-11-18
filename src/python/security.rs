@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::parser::Ecosystem;
-use crate::ranges::{Comparator, RangeOp, RangeSet};
+use crate::ranges::{Comparator, RangeOp, RangeSet, cmp_versions};
 use crate::security::{Purl, Vers, osv_ecosystem};
 
 use super::conv::eco_from_str;
@@ -92,17 +92,13 @@ pub(crate) fn osv_affected(
         let ranges = ranges_obj.cast::<PyList>()?;
         for item in ranges {
             let range = item.cast::<PyDict>()?;
-            let branches = osv_range_branches(range)?;
-            if branches.is_empty() {
-                continue;
-            }
-            let windows = RangeSet { branches };
             let range_eco = match range.get_item("type")? {
                 Some(kind) if kind.extract::<String>()?.eq_ignore_ascii_case("semver") => {
                     Ecosystem::Semver
                 }
                 _ => eco,
             };
+            let windows = RangeSet { branches: osv_range_branches(range, range_eco, version)? };
             if windows.contains_bounds(range_eco, version).map_err(PyValueError::new_err)? {
                 return Ok(true);
             }
@@ -129,7 +125,11 @@ pub(crate) fn osv_affected(
 /// carries several pairs (`0 → 1.2.0`, then `2.0.0 → 2.3.0`). Folding the
 /// events into one interval keeps only the last window and silently reports
 /// versions in every earlier one as unaffected.
-fn osv_range_branches(range: &Bound<'_, PyDict>) -> PyResult<Vec<Vec<Comparator>>> {
+fn osv_range_branches(
+    range: &Bound<'_, PyDict>,
+    ecosystem: Ecosystem,
+    version: &str,
+) -> PyResult<Vec<Vec<Comparator>>> {
     // `GIT` ranges carry commit hashes where versions would go; comparing them
     // as versions is meaningless (and errors out on strict ecosystems).
     if let Some(kind) = range.get_item("type")?
@@ -144,8 +144,16 @@ fn osv_range_branches(range: &Bound<'_, PyDict>) -> PyResult<Vec<Vec<Comparator>
 
     let mut branches: Vec<Vec<Comparator>> = Vec::new();
     let mut open: Option<Vec<Comparator>> = None;
+    let mut before_limits = None;
     for event_obj in events {
         let event = event_obj.cast::<PyDict>()?;
+        if let Some(value) = event.get_item("limit")? {
+            let limit: String = value.extract()?;
+            let before = limit == "*"
+                || cmp_versions(ecosystem, version, &limit).map_err(PyValueError::new_err)?.is_lt();
+            // OSV admits the target if it precedes any limit on this range.
+            before_limits = Some(before_limits.unwrap_or(false) || before);
+        }
         if let Some(value) = event.get_item("introduced")? {
             // A second `introduced` without an intervening close means the
             // previous window runs to infinity.
@@ -173,7 +181,10 @@ fn osv_range_branches(range: &Bound<'_, PyDict>) -> PyResult<Vec<Vec<Comparator>
             branches.push(clauses);
         }
     }
-    if let Some(previous) = open.take() {
+    if before_limits == Some(false) {
+        return Ok(Vec::new());
+    }
+    if let Some(previous) = open {
         branches.push(previous);
     }
     Ok(branches)
