@@ -192,18 +192,18 @@ impl PyVersion {
     }
 
     #[getter]
-    fn is_prerelease(&self) -> bool {
-        self.inner.is_prerelease
+    pub(crate) fn is_prerelease(&self) -> bool {
+        self.repr.release_flags(&self.inner).0
     }
 
     #[getter]
     fn is_postrelease(&self) -> bool {
-        self.inner.is_postrelease
+        self.repr.release_flags(&self.inner).1
     }
 
     #[getter]
     fn is_stable(&self) -> bool {
-        !self.inner.is_prerelease
+        !self.is_prerelease()
     }
 
     #[getter]
@@ -281,8 +281,8 @@ impl PyVersion {
         dict.set_item("minor", self.minor())?;
         dict.set_item("patch", self.patch())?;
         dict.set_item("build", &self.inner.build)?;
-        dict.set_item("is_prerelease", self.inner.is_prerelease)?;
-        dict.set_item("is_postrelease", self.inner.is_postrelease)?;
+        dict.set_item("is_prerelease", self.is_prerelease())?;
+        dict.set_item("is_postrelease", self.is_postrelease())?;
         Ok(dict)
     }
 

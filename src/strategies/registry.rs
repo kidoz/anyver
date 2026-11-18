@@ -29,6 +29,23 @@ pub(crate) enum ParsedRepr {
     Maven(MavenVersion),
 }
 
+impl ParsedRepr {
+    pub(crate) fn release_flags(&self, generic: &ParsedVersion) -> (bool, bool) {
+        match self {
+            Self::Semver(v) => (v.pre.is_some(), false),
+            Self::Pep440(v) => (v.is_prerelease, v.is_postrelease),
+            _ => (generic.is_prerelease, generic.is_postrelease),
+        }
+    }
+
+    pub(crate) fn maven_key(&self) -> Option<super::SortKey> {
+        match self {
+            Self::Maven(v) => Some(v.sort_key()),
+            _ => None,
+        }
+    }
+}
+
 pub(crate) trait VersionStrategy {
     fn parse(&self, input: &str) -> Result<ParsedRepr, String>;
     fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering;

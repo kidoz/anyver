@@ -73,7 +73,11 @@ pub(crate) fn sort_versions<'py>(
             Ok((p, obj))
         })
         .collect::<PyResult<Vec<_>>>()?;
-    pairs.sort_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0));
+    if eco == Ecosystem::Maven {
+        pairs.sort_by_cached_key(|(v, _)| v.maven_key());
+    } else {
+        pairs.sort_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0));
+    }
     Ok(pairs.into_iter().map(|(_, obj)| obj).collect())
 }
 
@@ -136,6 +140,17 @@ pub(crate) fn lte(a: &str, b: &str, ecosystem: &str) -> PyResult<bool> {
     le(a, b, ecosystem)
 }
 
+pub(super) fn collection_max<T>(
+    eco: Ecosystem,
+    values: Vec<(ParsedRepr, T)>,
+) -> Option<(ParsedRepr, T)> {
+    if eco == Ecosystem::Maven {
+        values.into_iter().max_by_key(|(v, _)| v.maven_key())
+    } else {
+        values.into_iter().max_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0))
+    }
+}
+
 #[pyfunction(signature = (versions, ecosystem = "generic"))]
 pub(crate) fn max_version<'py>(
     versions: &Bound<'py, PyAny>,
@@ -155,8 +170,7 @@ pub(crate) fn max_version<'py>(
         .collect::<PyResult<Vec<_>>>()?;
     // `max_by` keeps the *last* of equal elements, matching what sorting and
     // taking the tail used to return.
-    let (_, max_obj) =
-        parsed.into_iter().max_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0)).unwrap();
+    let (_, max_obj) = collection_max(eco, parsed).expect("nonempty input");
     Ok(max_obj)
 }
 
@@ -177,7 +191,11 @@ pub(crate) fn min_version<'py>(
             Ok((p, obj))
         })
         .collect::<PyResult<Vec<_>>>()?;
-    let (_, min_obj) =
-        parsed.into_iter().min_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0)).unwrap();
+    let (_, min_obj) = if eco == Ecosystem::Maven {
+        parsed.into_iter().min_by_key(|(v, _)| v.maven_key())
+    } else {
+        parsed.into_iter().min_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0))
+    }
+    .expect("nonempty input");
     Ok(min_obj)
 }

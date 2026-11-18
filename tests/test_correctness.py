@@ -339,6 +339,26 @@ def test_osv_limits_apply_to_the_whole_range():
 
 
 @pytest.mark.parametrize(
+    "eco,value,post",
+    [
+        ("semver", "2.0.0-1", False),
+        ("npm", "2.0.0-nightly.42", False),
+        ("pep440", "2.0.post2.dev1", True),
+    ],
+)
+def test_prerelease_flags_agree_with_selectors(eco, value, post):
+    obj = Version(value, eco)
+    assert obj.is_prerelease and not obj.is_stable
+    assert obj.is_postrelease is post
+    assert obj.to_dict()["is_prerelease"]
+    assert obj.to_dict()["is_postrelease"] is post
+    for candidate in [value, obj, Version(value, "generic")]:
+        assert anyver.stable_versions(["1.9.0", candidate], eco) == ["1.9.0"]
+        assert anyver.latest_stable(["1.9.0", candidate], eco) == "1.9.0"
+    assert Version("2.0-1", "pep440").is_postrelease
+
+
+@pytest.mark.parametrize(
     "spec,target,expected",
     [
         ("~=1.4", "1.9", True),
@@ -384,3 +404,13 @@ def test_invalid_pep440_compatible_release(spec):
 def test_npm_intersection_has_an_admitted_version(left, right, overlap):
     assert anyver.ranges_intersect(left, right, "npm") is overlap
     assert anyver.ranges_intersect(right, left, "npm") is overlap
+
+
+def test_maven_collection_order_is_independent_of_input_order():
+    values = ["1-foo-alpha", "1-foo", "1-foo.sp-0"]
+    for order in permutations(values):
+        assert anyver.sort_versions(order, "maven") == values
+        assert anyver.min_version(order, "maven") == values[0]
+        assert anyver.max_version(order, "maven") == values[-1]
+        assert anyver.latest_stable(order, "maven") == values[-1]
+    assert anyver.compare(values[-1], values[0], "maven") < 0
