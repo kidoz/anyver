@@ -92,6 +92,8 @@ class Version:
         list can disagree. compare() still preserves Maven's cycle, for
         example `1-foo.sp-0 < 1-foo-alpha`, while the key sorts
         `1-foo-alpha < 1-foo < 1-foo.sp-0`.
+        RubyGems and Arch also use total-order keys when their native
+        comparison rules give different ordering to versions that compare equal.
         """
 
 # --- Module-level functions ---

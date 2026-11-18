@@ -8,10 +8,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 use std::cmp::Ordering;
 
-use crate::parser::{Ecosystem, ParsedVersion, Seg, autodetect_ecosystem, parse, tag_weight};
-use crate::strategies::{
-    ParsedRepr, canonical_segments, compare_for_ecosystem, parse_for_ecosystem,
-};
+use crate::parser::{Ecosystem, ParsedVersion, Seg, autodetect_ecosystem, parse};
+use crate::strategies::{ParsedRepr, compare_for_ecosystem, generic_sort_key, parse_for_ecosystem};
 
 use super::conv::{SegToPy, eco_from_str, extract_parsed_for_ecosystem};
 
@@ -19,43 +17,19 @@ use super::conv::{SegToPy, eco_from_str, extract_parsed_for_ecosystem};
 fn version_key(version: &PyVersion) -> Vec<(i32, u64, String)> {
     match &version.repr {
         ParsedRepr::Pep440(p) => p.key().to_vec(),
-        ParsedRepr::Semver(v) => {
-            let mut key = vec![
-                (2, v.major, String::new()),
-                (2, v.minor, String::new()),
-                (2, v.patch, String::new()),
-            ];
-            key.push((i32::from(v.pre.is_none()), 0, String::new()));
-            if let Some(pre) = &v.pre {
-                for part in pre.split('.') {
-                    key.push(match part.parse::<u64>() {
-                        Ok(n) => (0, n, String::new()),
-                        Err(_) => (1, 0, part.to_string()),
-                    });
-                }
-            }
-            key
-        }
-        ParsedRepr::Generic(p) => {
-            let mut key = vec![(2, p.epoch, String::new())];
-            for seg in canonical_segments(&p.segments).iter() {
-                key.push(match seg {
-                    Seg::Num(n) => (100, *n, String::new()),
-                    Seg::Text(s) => (
-                        tag_weight(s).unwrap_or(29),
-                        0,
-                        if tag_weight(s).is_some() { String::new() } else { s.clone() },
-                    ),
-                });
-            }
-            key.push((30, 0, String::new()));
-            key
-        }
+        ParsedRepr::Semver(v) => v.sort_key(),
+        ParsedRepr::Generic(p) => generic_sort_key(p),
         ParsedRepr::Debian(v) => v.sort_key(),
         ParsedRepr::Rpm(v) => v.sort_key(),
         ParsedRepr::Maven(v) => v.sort_key(),
         ParsedRepr::Hackage(v) => v.iter().map(|&part| (0, part, String::new())).collect(),
         ParsedRepr::Jdk(v) => v.sort_key(),
+        ParsedRepr::Nuget(v) => v.key().clone(),
+        ParsedRepr::Ruby(v) => v.sort_key(),
+        ParsedRepr::Cpan(v) => v.sort_key(),
+        ParsedRepr::Alpine(v) => v.key.clone(),
+        ParsedRepr::Arch(v) => v.sort_key(),
+        ParsedRepr::Homebrew(key) => key.clone(),
     }
 }
 
@@ -84,11 +58,7 @@ impl PyVersion {
             let repr = parse_for_ecosystem(eco, version).map_err(PyValueError::new_err)?;
             (eco, repr)
         };
-        let inner = match &repr {
-            ParsedRepr::Generic(parsed) => parsed.clone(),
-            ParsedRepr::Jdk(parsed) => parsed.version_view(version),
-            _ => parse(version),
-        };
+        let inner = repr.version_view(version);
         Ok(PyVersion { inner, eco, repr })
     }
 
@@ -168,6 +138,7 @@ impl PyVersion {
             ParsedRepr::Rpm(v) => v.hash_key().hash(&mut hasher),
             ParsedRepr::Debian(v) => v.hash_key().hash(&mut hasher),
             ParsedRepr::Maven(v) => v.canonical().hash(&mut hasher),
+            ParsedRepr::Arch(v) => v.hash_key().hash(&mut hasher),
             _ => version_key(self).hash(&mut hasher),
         }
         hasher.finish()

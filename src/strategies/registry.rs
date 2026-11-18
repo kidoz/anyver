@@ -6,18 +6,23 @@
 use crate::parser::{Ecosystem, ParsedVersion, parse_generic};
 use std::cmp::Ordering;
 
+use super::alpine::{AlpineVersion, parse_alpine};
+use super::arch::{ArchVersion, parse_arch};
+use super::cpan::{CpanVersion, parse_cpan};
 use super::debian::{DebianVersion, cmp_debian, parse_debian};
 use super::generic::cmp_parsed;
 use super::hackage::parse_hackage;
+use super::homebrew::parse_homebrew;
 use super::jdk::{JdkVersion, parse_jdk};
 use super::maven::{MavenVersion, cmp_maven, parse_maven};
+use super::nuget::{NugetVersion, parse_nuget};
 use super::pep440::{Pep440Version, cmp_pep440, parse_pep440};
 use super::rpm::{RpmVersion, cmp_rpm, parse_rpm};
+use super::ruby::{RubyVersion, parse_ruby};
 use super::semver::{SemVer, cmp_semver_strict, parse_semver_strict};
 use super::validators::{
-    validate_alpine, validate_arch, validate_calver, validate_composer, validate_conda,
-    validate_cpan, validate_cran, validate_docker, validate_freebsd, validate_gentoo, validate_go,
-    validate_homebrew, validate_maven, validate_nix, validate_nuget, validate_ruby, validate_spack,
+    validate_calver, validate_composer, validate_conda, validate_cran, validate_docker,
+    validate_freebsd, validate_gentoo, validate_go, validate_maven, validate_nix, validate_spack,
     validate_terraform,
 };
 
@@ -31,21 +36,42 @@ pub(crate) enum ParsedRepr {
     Maven(MavenVersion),
     Hackage(Vec<u64>),
     Jdk(JdkVersion),
+    Nuget(NugetVersion),
+    Ruby(RubyVersion),
+    Cpan(CpanVersion),
+    Alpine(AlpineVersion),
+    Arch(ArchVersion),
+    Homebrew(super::SortKey),
 }
 
 impl ParsedRepr {
+    pub(crate) fn version_view(&self, input: &str) -> ParsedVersion {
+        match self {
+            Self::Generic(parsed) => parsed.clone(),
+            Self::Jdk(parsed) => parsed.version_view(input),
+            Self::Nuget(parsed) => parsed.version_view(input),
+            _ => parse_generic(input),
+        }
+    }
+
     pub(crate) fn release_flags(&self, generic: &ParsedVersion) -> (bool, bool) {
         match self {
             Self::Semver(v) => (v.pre.is_some(), false),
             Self::Pep440(v) => (v.is_prerelease, v.is_postrelease),
             Self::Jdk(v) => (v.is_prerelease(), false),
+            Self::Nuget(v) => (v.is_prerelease(), false),
+            Self::Ruby(v) => (v.is_prerelease, false),
+            Self::Cpan(v) => (v.is_alpha, false),
+            Self::Alpine(v) => (v.is_prerelease, v.is_postrelease),
             _ => (generic.is_prerelease, generic.is_postrelease),
         }
     }
 
-    pub(crate) fn maven_key(&self) -> Option<super::SortKey> {
+    pub(crate) fn collection_key(&self) -> Option<super::SortKey> {
         match self {
             Self::Maven(v) => Some(v.sort_key()),
+            Self::Ruby(v) => Some(v.sort_key()),
+            Self::Arch(v) => Some(v.sort_key()),
             _ => None,
         }
     }
@@ -242,22 +268,88 @@ impl VersionStrategy for JdkStrategy {
 }
 
 // Validate→generic ecosystems
-impl_generic_strategy!(RubyStrategy, validate_ruby);
-impl_generic_strategy!(NugetStrategy, validate_nuget);
 impl_generic_strategy!(ComposerStrategy, validate_composer);
 impl_generic_strategy!(CalverStrategy, validate_calver);
-impl_generic_strategy!(AlpineStrategy, validate_alpine);
 impl_generic_strategy!(DockerStrategy, validate_docker);
 impl_generic_strategy!(CondaStrategy, validate_conda);
-impl_generic_strategy!(ArchStrategy, validate_arch);
 impl_generic_strategy!(GentooStrategy, validate_gentoo);
 impl_generic_strategy!(CranStrategy, validate_cran);
 impl_generic_strategy!(SpackStrategy, validate_spack);
 impl_generic_strategy!(TerraformStrategy, validate_terraform);
-impl_generic_strategy!(CpanStrategy, validate_cpan);
 impl_generic_strategy!(NixStrategy, validate_nix);
-impl_generic_strategy!(HomebrewStrategy, validate_homebrew);
 impl_generic_strategy!(FreebsdStrategy, validate_freebsd);
+
+impl VersionStrategy for NugetStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        parse_nuget(input).map(ParsedRepr::Nuget)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Nuget(a), ParsedRepr::Nuget(b)) => a.key().cmp(b.key()),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl VersionStrategy for RubyStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        parse_ruby(input).map(ParsedRepr::Ruby)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Ruby(a), ParsedRepr::Ruby(b)) => a.compare(b),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl VersionStrategy for CpanStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        parse_cpan(input).map(ParsedRepr::Cpan)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Cpan(a), ParsedRepr::Cpan(b)) => a.components().cmp(b.components()),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl VersionStrategy for AlpineStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        parse_alpine(input).map(ParsedRepr::Alpine)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Alpine(a), ParsedRepr::Alpine(b)) => a.key.cmp(&b.key),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl VersionStrategy for ArchStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        parse_arch(input).map(ParsedRepr::Arch)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Arch(a), ParsedRepr::Arch(b)) => a.compare(b),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl VersionStrategy for HomebrewStrategy {
+    fn parse(&self, input: &str) -> Result<ParsedRepr, String> {
+        parse_homebrew(input).map(ParsedRepr::Homebrew)
+    }
+    fn compare(&self, left: &ParsedRepr, right: &ParsedRepr) -> Ordering {
+        match (left, right) {
+            (ParsedRepr::Homebrew(a), ParsedRepr::Homebrew(b)) => a.cmp(b),
+            _ => unreachable!(),
+        }
+    }
+}
 
 static GENERIC_STRATEGY: GenericStrategy = GenericStrategy;
 static SEMVER_STRATEGY: SemverStrategy = SemverStrategy;

@@ -73,8 +73,8 @@ pub(crate) fn sort_versions<'py>(
             Ok((p, obj))
         })
         .collect::<PyResult<Vec<_>>>()?;
-    if eco == Ecosystem::Maven {
-        pairs.sort_by_cached_key(|(v, _)| v.maven_key());
+    if uses_collection_key(eco) {
+        pairs.sort_by_cached_key(|(v, _)| v.collection_key());
     } else {
         pairs.sort_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0));
     }
@@ -140,12 +140,17 @@ pub(crate) fn lte(a: &str, b: &str, ecosystem: &str) -> PyResult<bool> {
     le(a, b, ecosystem)
 }
 
+// Some native comparators give inconsistent orderings for equal versions.
+fn uses_collection_key(eco: Ecosystem) -> bool {
+    matches!(eco, Ecosystem::Maven | Ecosystem::Ruby | Ecosystem::Arch)
+}
+
 pub(super) fn collection_max<T>(
     eco: Ecosystem,
     values: Vec<(ParsedRepr, T)>,
 ) -> Option<(ParsedRepr, T)> {
-    if eco == Ecosystem::Maven {
-        values.into_iter().max_by_key(|(v, _)| v.maven_key())
+    if uses_collection_key(eco) {
+        values.into_iter().max_by_key(|(v, _)| v.collection_key())
     } else {
         values.into_iter().max_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0))
     }
@@ -191,8 +196,8 @@ pub(crate) fn min_version<'py>(
             Ok((p, obj))
         })
         .collect::<PyResult<Vec<_>>>()?;
-    let (_, min_obj) = if eco == Ecosystem::Maven {
-        parsed.into_iter().min_by_key(|(v, _)| v.maven_key())
+    let (_, min_obj) = if uses_collection_key(eco) {
+        parsed.into_iter().min_by_key(|(v, _)| v.collection_key())
     } else {
         parsed.into_iter().min_by(|a, b| compare_for_ecosystem(eco, &a.0, &b.0))
     }

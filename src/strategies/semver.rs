@@ -1,6 +1,7 @@
 //! Strict `SemVer` parsing and comparison (also used by Go, crates.io, Hex,
 //! Swift, and npm, which share `SemVer`'s grammar and ordering rules).
 
+use super::SortKey;
 use crate::parser::strip_v;
 use std::cmp::Ordering;
 
@@ -30,6 +31,34 @@ impl SemVer {
         }
         Some(Self::release(self.major.checked_add(1)?, 0, 0))
     }
+
+    pub(crate) fn sort_key(&self) -> SortKey {
+        let mut key = vec![
+            (2, self.major, String::new()),
+            (2, self.minor, String::new()),
+            (2, self.patch, String::new()),
+            (i32::from(self.pre.is_none()), 0, String::new()),
+        ];
+        if let Some(pre) = &self.pre {
+            for id in pre.split('.') {
+                if let Ok(number) = id.parse::<u64>() {
+                    key.push((0, number, String::new()));
+                } else if is_numeric_identifier(id) {
+                    // A marker above the largest u64 preserves the existing
+                    // key encoding for versions that already fit in u64.
+                    key.push((0, u64::MAX, "+".to_string()));
+                    key.push((0, id.len() as u64, id.to_string()));
+                } else {
+                    key.push((1, 0, id.to_string()));
+                }
+            }
+        }
+        key
+    }
+}
+
+fn is_numeric_identifier(s: &str) -> bool {
+    s.bytes().all(|b| b.is_ascii_digit())
 }
 
 pub(crate) fn parse_strict_u64(s: &str, label: &str) -> Result<u64, String> {
@@ -64,16 +93,20 @@ pub(crate) fn validate_prerelease(pre: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) fn validate_build(build: &str) -> Result<(), String> {
+    if build.split('.').any(|ident| {
+        ident.is_empty() || !ident.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    }) {
+        return Err(format!("invalid build metadata: '{build}'"));
+    }
+    Ok(())
+}
+
 pub(crate) fn parse_semver_strict(input: &str) -> Result<SemVer, String> {
     let s = strip_v(input.trim());
     let s = match s.find('+') {
         Some(p) => {
-            let build = &s[p + 1..];
-            if build.split('.').any(|ident| {
-                ident.is_empty() || !ident.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-            }) {
-                return Err(format!("invalid SemVer build metadata: '{build}'"));
-            }
+            validate_build(&s[p + 1..])?;
             &s[..p]
         }
         None => s,

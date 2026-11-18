@@ -8,6 +8,8 @@ use crate::parser::{ParsedVersion, Seg, tag_weight};
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
+use super::SortKey;
+
 pub(crate) fn normalized(segs: &[Seg]) -> &[Seg] {
     let mut end = segs.len();
     while end > 0
@@ -121,4 +123,17 @@ pub(crate) fn cmp_segments(left: &[Seg], right: &[Seg]) -> Ordering {
 
 pub(crate) fn cmp_parsed(a: &ParsedVersion, b: &ParsedVersion) -> Ordering {
     a.epoch.cmp(&b.epoch).then_with(|| cmp_segments(&a.segments, &b.segments))
+}
+
+pub(crate) fn generic_sort_key(version: &ParsedVersion) -> SortKey {
+    let mut key = vec![(2, version.epoch, String::new())];
+    key.extend(canonical_segments(&version.segments).iter().map(|segment| match segment {
+        Seg::Num(number) => (100, *number, String::new()),
+        Seg::Text(text) => match tag_weight(text) {
+            Some(weight) => (weight, 0, String::new()),
+            None => (29, 0, text.clone()),
+        },
+    }));
+    key.push((30, 0, String::new()));
+    key
 }

@@ -307,6 +307,101 @@ def test_jdk_rejects_invalid_runtime_versions(value):
     assert Version.try_parse(value, ecosystem="jdk") is None
 
 
+def test_nuget_uses_case_insensitive_version_release_precedence():
+    assert anyver.compare("1.2.3-1", "1.2.3-alpha", "nuget") == -1
+    assert anyver.compare("1.2.3-rc", "1.2.3-rc.0", "nuget") == -1
+    assert anyver.compare("1.2.3-10000000000", "1.2.3-2147483648", "nuget") == -1
+    assert anyver.latest_stable(["1.2.3-1", "1.2"], "nuget") == "1.2"
+    left, right = Version("1.02-RC+x", "nuget"), Version("1.2.0.0-rc+y", "nuget")
+    assert left == right
+    assert hash(left) == hash(right)
+    assert left.sort_key() == right.sort_key()
+    assert Version("1-2", "nuget").release() == (1,)
+    for malformed in ["1.2.3.4.5", "1.2.3-01", "1.2.3-b+", "1..2"]:
+        assert Version.try_parse(malformed, "nuget") is None
+
+
+def test_rubygems_raw_comparison_and_portable_sorting():
+    assert anyver.compare("1.0.a", "1.0.A", "ruby") == 1
+    assert anyver.compare("1.0-1", "1.0", "ruby") == -1
+    assert anyver.compare("1.0-rc1", "1.0.pre.rc1", "ruby") == 0
+    assert anyver.latest_stable(["2.0.final", "1.0"], "ruby") == "1.0"
+    assert Version.try_parse("1.2+foo", "ruby") is None
+    a, equivalent, b = (Version(value, "ruby") for value in ("1.0.a", "1.a", "1.b"))
+    assert a == equivalent
+    assert a > b > equivalent
+    assert hash(a) == hash(equivalent)
+    assert a.sort_key() == equivalent.sort_key() < b.sort_key()
+    assert anyver.sort_versions(["1.b", "1.0.a", "1.a"], "ruby") == ["1.0.a", "1.a", "1.b"]
+
+
+def test_cpan_decimal_dotted_and_alpha_versions():
+    a, b = Version("1.002003", "cpan"), Version("v1.2.3", "cpan")
+    assert a == b
+    assert hash(a) == hash(b)
+    assert a.sort_key() == b.sort_key()
+    assert anyver.compare("1.02", "1.2", "cpan") == -1
+    assert anyver.compare("1.23_4", "1.234", "cpan") == 0
+    assert Version("1.23_4", "cpan").is_prerelease
+    assert anyver.latest_stable(["1.23_4", "1.23"], "cpan") == "1.23"
+    assert Version.try_parse("1.2_3.4", "cpan") is None
+
+
+def test_alpine_package_suffixes_commits_and_revisions():
+    versions = [
+        "1.0_pre",
+        "1.0_rc",
+        "1.0_rc0",
+        "1.0",
+        "1.0-r0",
+        "1.0-r1",
+        "1.0~abc",
+        "1.0_git",
+        "1.0_p",
+        "1.0a",
+        "1.0.0",
+        "1.01",
+        "1.1",
+    ]
+    assert anyver.sort_versions(versions[::-1], "alpine") == versions
+    for text in ["1.0a.1", "1.0-r", "1.0~ZZ", "1.0_p1a"]:
+        assert Version.try_parse(text, "alpine") is None
+    assert Version("1.0_rc1-r2", "apk").is_prerelease
+    assert Version("1.0-r0", "apk").is_postrelease
+    assert anyver.latest_stable(["1.0-r0", "1.1_rc1-r2"], "apk") == "1.0-r0"
+    assert anyver.compare("01.0-r00", "1.0-r0", "apk") == 0
+
+
+def test_arch_package_release_and_separator_order():
+    assert anyver.compare("1.0", "1.0.0", "arch") == -1
+    assert anyver.compare("1a", "1.a", "arch") == -1
+    assert anyver.compare("1...a", "1.1", "arch") == 1
+    assert anyver.compare("1.0+1", "1.0.1", "arch") == 0
+    bare, r0, r1 = (Version(value, "pacman") for value in ("1.0", "1.0-0", "1.0-1"))
+    assert bare == r0
+    assert bare == r1
+    assert r0 < r1
+    assert hash(bare) == hash(r0) == hash(r1)
+    assert bare.sort_key() < r0.sort_key() < r1.sort_key()
+    assert anyver.sort_versions(["1.0-1", "1.0", "1.0-0"], "arch") == [
+        "1.0",
+        "1.0-0",
+        "1.0-1",
+    ]
+
+
+def test_homebrew_orders_formula_revisions_after_the_upstream_version():
+    assert anyver.compare("1.0_1", "1.0.1", "homebrew") == -1
+    assert anyver.compare("1.0", "1.0_0", "brew") == 0
+    assert anyver.compare("HEAD-abc", "HEAD-def", "homebrew") == 0
+    assert anyver.sort_versions(["HEAD", "1.0_10", "1.0.1", "1.0_1"], "homebrew") == [
+        "1.0_1",
+        "1.0_10",
+        "1.0.1",
+        "HEAD",
+    ]
+
+
 def test_maven_sort_key_breaks_only_the_cycle_edge():
     alpha = Version("1-foo-alpha", ecosystem="maven")
     release = Version("1-foo", ecosystem="maven")

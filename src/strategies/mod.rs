@@ -20,14 +20,20 @@
 //! generic comparator helpers `python.rs` calls directly. The
 //! `crate::strategies::<name>` paths used elsewhere are unchanged by the split.
 
+mod alpine;
+mod arch;
+mod cpan;
 mod debian;
 mod generic;
 mod hackage;
+mod homebrew;
 mod jdk;
 mod maven;
+mod nuget;
 mod pep440;
 mod registry;
 mod rpm;
+mod ruby;
 mod semver;
 mod validators;
 

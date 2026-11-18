@@ -14,10 +14,6 @@ pub(crate) fn validate_go(input: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn validate_ruby(input: &str) -> Result<(), String> {
-    validate_digit_start(input, "Ruby gem")
-}
-
 pub(crate) fn validate_maven(input: &str) -> Result<(), String> {
     validate_digit_start(input, "Maven")?;
     let s = input.trim();
@@ -29,10 +25,6 @@ pub(crate) fn validate_maven(input: &str) -> Result<(), String> {
         return Err(format!("Maven version contains a non-ASCII numeral '{c}': '{input}'"));
     }
     Ok(())
-}
-
-pub(crate) fn validate_nuget(input: &str) -> Result<(), String> {
-    validate_digit_start(input, "NuGet")
 }
 
 /// Composer tolerates the `v` prefix (`v1.2.3`), so the digit check runs
@@ -50,10 +42,6 @@ pub(crate) fn validate_composer(input: &str) -> Result<(), String> {
 
 pub(crate) fn validate_calver(input: &str) -> Result<(), String> {
     validate_digit_start(input, "CalVer")
-}
-
-pub(crate) fn validate_alpine(input: &str) -> Result<(), String> {
-    validate_digit_start(input, "Alpine")
 }
 
 pub(crate) fn validate_docker(input: &str) -> Result<(), String> {
@@ -86,21 +74,6 @@ pub(crate) fn validate_conda(input: &str) -> Result<(), String> {
     validate_digit_start(input, "Conda")
 }
 
-pub(crate) fn validate_arch(input: &str) -> Result<(), String> {
-    let s = input.trim();
-    if s.is_empty() {
-        return Err("empty Arch version".to_string());
-    }
-    let after_epoch = match s.split_once(':') {
-        Some((epoch, rest)) if epoch.bytes().all(|b| b.is_ascii_digit()) => rest,
-        _ => s,
-    };
-    if after_epoch.is_empty() || !after_epoch.as_bytes()[0].is_ascii_alphanumeric() {
-        return Err(format!("invalid Arch version: '{input}'"));
-    }
-    Ok(())
-}
-
 pub(crate) fn validate_gentoo(input: &str) -> Result<(), String> {
     validate_digit_start(input, "Gentoo")
 }
@@ -122,16 +95,8 @@ pub(crate) fn validate_terraform(input: &str) -> Result<(), String> {
     validate_digit_start(input, "Terraform/OpenTofu")
 }
 
-pub(crate) fn validate_cpan(input: &str) -> Result<(), String> {
-    validate_nonempty(input, "CPAN")
-}
-
 pub(crate) fn validate_nix(input: &str) -> Result<(), String> {
     validate_nonempty(input, "Nix")
-}
-
-pub(crate) fn validate_homebrew(input: &str) -> Result<(), String> {
-    validate_nonempty(input, "Homebrew")
 }
 
 pub(crate) fn validate_freebsd(input: &str) -> Result<(), String> {
