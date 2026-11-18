@@ -246,15 +246,27 @@ anyver.compare("1!0.1", "2.0", ecosystem="pep440")     # 1
 
 | Comparison used | Ecosystem modes |
 | --- | --- |
-| Dedicated ordering | `pep440`, `debian`, `rpm`, `maven`, `hackage`, `jdk` |
+| Dedicated ordering | `pep440`, `debian`, `rpm`, `maven`, `ruby`, `nuget`, `alpine`, `arch`, `cpan`, `hackage`, `jdk` |
 | Strict SemVer precedence | `semver`, `npm`, `go`, `crates`, `hex`, `swift`, `dart`, `julia`, `helm` |
-| Generic ordering | `generic`, `ruby`, `nuget`, `composer`, `calver`, `alpine`, `docker`, `conda`, `arch`, `gentoo`, `cran`, `spack`, `terraform`, `cpan`, `nix`, `homebrew`, `freebsd` |
+| Numeric package versions | `cran` |
+| Generic upstream ordering with formula revisions | `homebrew` |
+| Generic ordering | `generic`, `composer`, `calver`, `docker`, `conda`, `gentoo`, `spack`, `terraform`, `nix`, `freebsd` |
 
-The SemVer row describes comparison of concrete versions. Range rules and
-build metadata precedence can differ across package managers. The generic
-modes use anyver's segment ordering with basic ecosystem validation. For
-example, Alpine's native ordering of package revisions differs from the
-generic ordering.
+The SemVer modes compare concrete versions with unsigned 64-bit release
+components and arbitrary-length numeric prerelease identifiers. Each package
+manager can impose its own input limits and range rules. The `dart` and
+`julia` modes ignore build metadata under this comparator.
+
+The generic modes use anyver's segment ordering and can differ from the
+package managers' comparators. CalVer schemes and Docker tags have
+project-specific precedence. Docker mode validates tag syntax and uses the
+generic comparator for ordering.
+
+NuGet compares prerelease labels case-insensitively and ignores build
+metadata. Alpine follows apk-tools 3 ordering, including commit suffixes and
+package revisions. For example, `1.0_pre < 1.0_rc < 1.0 < 1.0-r0`. CPAN
+normalizes decimal and dotted forms, such as `1.002003 == v1.2.3`, and marks
+developer releases with underscores as prereleases.
 
 Select `hackage` or `jdk` explicitly when the source is known:
 
@@ -296,9 +308,8 @@ Version("1.2.3-rc.1").sort_key()
 # PEP 440 local labels (e.g. `1.0+abc` sorts above `1.0`).
 ```
 
-> **Scope:** keys order versions within a single ecosystem. Debian, RPM,
-> generic, strict SemVer-family, PEP 440, Hackage, and JDK keys reproduce
-> comparison.
+> **Scope:** keys order versions within a single ecosystem. The keys
+> reproduce comparison except where native rules prevent a total order.
 > Compare keys only from the same ecosystem. Numeric values retain their full
 > precision, including Debian/RPM digit runs wider than `u64` and Maven's
 > arbitrary-precision numbers. The tuple shape is experimental; regenerate
@@ -311,9 +322,13 @@ Version("1.2.3-rc.1").sort_key()
 > against maven-artifact 3.10.0, `compare()` gives
 > `1-foo.sp-0 < 1-foo-alpha < 1-foo < 1-foo.sp-0`, while the key sorts
 > `1-foo-alpha < 1-foo < 1-foo.sp-0`. `compare()` keeps the native results.
-> In Maven mode, `sort_versions()`, `min_version()`, `max_version()`, and
-> `latest_stable()` use the same total order as `sort_key()`.
-> Hashes follow each ecosystem's equality rules, including native comparators.
+> RubyGems can consider `1.0.a` equal to `1.a` while ordering them on
+> opposite sides of `1.b`. Its key gives equal versions a shared position.
+> Arch's `vercmp` treats `1.0` as equal to both `1.0-0` and `1.0-1`,
+> while the key orders all three by package release.
+> In Maven, RubyGems, and Arch modes, collection sorting and selection use
+> the same total order as `sort_key()`. Hashes follow each ecosystem's
+> equality rules.
 
 The Maven reference check is optional and runs offline against a local JAR
 with a JDK installed. It checks all pairs in a deterministic corpus, including

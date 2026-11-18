@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+- Corrected ordering in NuGet, RubyGems, Alpine, Arch, CPAN, and Homebrew
+  formula revisions. RubyGems and Arch collection helpers use portable
+  total-order keys and pairwise comparisons preserve their native behavior.
+- SemVer accepts arbitrary-length numeric prerelease identifiers.
+- Debian, Docker, and CRAN reject malformed versions previously accepted.
+- These validation and ordering changes affect callers that relied on the
+  previous results. Regenerate stored keys for the corrected modes.
 - Added Hackage/Cabal package versions and Java 9+ JDK runtime version ordering.
 - Fixed exact range matching for SemVer suffixes containing `.x`, PEP 440
   compatible-release bounds, and npm intersections with no admissible version.
