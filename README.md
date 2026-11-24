@@ -223,7 +223,7 @@ Detection rules (in priority order):
 6. `_alpha`, `_beta`, `_rc`, `_p` → Alpine
 7. `+deb`, `+ubuntu` → Debian; `.el`, `.fc`, `.amzn` → RPM
 8. Digit-letter patterns like `1a1`, `1b2`, `1rc1` → PEP 440; a trailing `-rN` → Alpine
-9. Dot-separated `.pre`, `.rc`, `.beta`, `.alpha` (no hyphens) → Ruby
+9. Dot-separated component exactly `pre`/`rc`, or starting with `beta`/`alpha` (no hyphens) → Ruby
 10. Year-like first segment (1990-2100) → CalVer
 11. Otherwise → Generic
 
@@ -305,6 +305,7 @@ case-sensitive optional build information. JDK mode accepts `21-ea+10` and
 Version("1.2.3-rc.1+build.42").to_dict()
 # {
 #   "raw": "1.2.3-rc.1+build.42",
+#   "ecosystem": "generic",
 #   "epoch": 0,
 #   "major": 1,
 #   "minor": 2,
