@@ -130,9 +130,16 @@ impl PyVersion {
     }
 
     fn __hash__(&self) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::{DefaultHasher, RandomState};
+        use std::hash::{BuildHasher, Hash, Hasher};
+        use std::sync::OnceLock;
+        // Python randomizes its own string hashes per process. Mix in a
+        // process-wide random seed so that `Version` hashes are not more
+        // predictable than the strings they are built from.
+        static SEED: OnceLock<u64> = OnceLock::new();
+        let seed = *SEED.get_or_init(|| RandomState::new().hash_one(0u8));
         let mut hasher = DefaultHasher::new();
+        seed.hash(&mut hasher);
         self.eco.as_str().hash(&mut hasher);
         match &self.repr {
             ParsedRepr::Rpm(v) => v.hash_key().hash(&mut hasher),

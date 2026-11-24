@@ -1,5 +1,7 @@
 """Regressions for version, range, and security interoperability contracts."""
 
+import subprocess
+import sys
 from itertools import permutations, product
 
 import pytest
@@ -820,6 +822,21 @@ def test_error_messages_do_not_echo_huge_inputs():
         with pytest.raises(ValueError) as error:
             call()
         assert len(str(error.value)) < 450
+
+
+def test_version_hashes_are_randomized_per_process():
+    script = "import anyver; print(hash(anyver.Version('1.0')))"
+    seeds = {hash(Version("1.0"))}
+    for _ in range(2):
+        run = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=True
+        )
+        seeds.add(int(run.stdout))
+    # Every value is an integer hash, so equal hashes really would collapse.
+    assert all(isinstance(seed, int) for seed in seeds)
+    assert len(seeds) > 1
+    # Equal versions still hash equal within a process.
+    assert hash(Version("1.0")) == hash(Version("1.0.0"))
 
 
 @pytest.mark.parametrize(
