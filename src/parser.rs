@@ -152,8 +152,9 @@ impl Ecosystem {
 
     /// The VERS versioning-scheme name for this ecosystem. VERS reuses the
     /// PURL *type*, which differs from our own name for six ecosystems (`pypi`
-    /// not `pep440`, `deb` not `debian`, …). Every value returned here is
-    /// accepted by [`Self::from_str`], so `vers:` strings round-trip.
+    /// not `pep440`, `deb` not `debian`, `apk` not `alpine`, …). Every value
+    /// returned here is accepted by [`Self::from_str`], so `vers:` strings
+    /// round-trip.
     pub(crate) fn vers_scheme(self) -> &'static str {
         match self {
             Self::Pep440 => "pypi",

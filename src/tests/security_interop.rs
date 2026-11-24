@@ -129,3 +129,16 @@ fn test_osv_ecosystem_unknown_falls_back_to_generic() {
     assert_eq!(osv_ecosystem("OSS-Fuzz"), Ecosystem::Generic);
     assert_eq!(osv_ecosystem("Android"), Ecosystem::Generic);
 }
+
+// ====================================================================
+// VERS scheme names
+// ====================================================================
+
+#[test]
+fn test_vers_alpine_uses_the_purl_type() {
+    // Alpine's registered PURL type is `apk`; `alpine` is an accepted alias.
+    let vers = Vers::new(Ecosystem::Alpine, ">=1.0.0-r1").unwrap();
+    assert_eq!(vers.to_vers(), "vers:apk/>=1.0.0-r1");
+    assert!(Vers::parse("vers:apk/>=1.0.0-r1").is_ok());
+    assert!(Vers::parse("vers:alpine/>=1.0.0-r1").is_ok());
+}

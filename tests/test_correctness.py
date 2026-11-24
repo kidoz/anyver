@@ -573,6 +573,14 @@ def test_osv_limits_apply_to_the_whole_range():
     assert anyver.osv_affected("3.0.0", record)
 
 
+def test_build_vers_uses_the_purl_type_for_alpine():
+    # Alpine's registered PURL type is `apk`; `alpine` is an accepted alias.
+    assert anyver.build_vers("alpine", ">=1.0.0-r1") == "vers:apk/>=1.0.0-r1"
+    assert anyver.build_vers("apk", ">=1.0.0-r1") == "vers:apk/>=1.0.0-r1"
+    assert anyver.vers_contains("vers:apk/>=1.0.0-r1", "1.2.3-r1")
+    assert anyver.vers_contains("vers:alpine/>=1.0.0-r1", "1.2.3-r1")
+
+
 @pytest.mark.parametrize(
     "eco,value,post",
     [
