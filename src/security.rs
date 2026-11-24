@@ -1,6 +1,7 @@
-//! Security-interoperability helpers for PURL and VERS strings.
+//! Security-interoperability helpers for PURL, VERS, and OSV strings.
 
 use crate::parser::Ecosystem;
+use crate::ranges::{Comparator, RangeOp};
 use crate::strategies::{ParsedRepr, compare_for_ecosystem, parse_for_ecosystem};
 use std::cmp::Ordering;
 
@@ -150,22 +151,182 @@ pub(crate) fn validate_purl_type(package_type: &str) -> Result<(), String> {
 /// Map an OSV `affected.package.ecosystem` value onto a comparison algorithm.
 ///
 /// OSV qualifies distro ecosystems with a release (`Debian:11`, `Alpine:v3.18`,
-/// `Ubuntu:22.04:LTS`); only the leading name selects the algorithm. Names with
-/// no anyver equivalent (`GitHub Actions`, `Android`, `Linux`, `OSS-Fuzz`, …)
-/// fall back to the generic comparator: an unrecognised ecosystem should not
-/// fail the whole record, since the versions in it are usually still ordered
-/// the way the generic parser reads them.
-pub(crate) fn osv_ecosystem(name: &str) -> Ecosystem {
+/// `Ubuntu:22.04:LTS`); only the leading name selects the algorithm.
+///
+/// A name with no anyver equivalent (`GitHub Actions`, `Android`, `Linux`,
+/// `OSS-Fuzz`, …) is an error. Vulnerability matching must not answer with a
+/// heuristic comparator the caller never asked for; `generic` can be passed
+/// explicitly when that comparison is wanted after all.
+pub(crate) fn osv_ecosystem(name: &str) -> Result<Ecosystem, String> {
     let base = name.split(':').next().unwrap_or(name).trim().to_ascii_lowercase();
-    match base.as_str() {
+    let ecosystem = match base.as_str() {
         "ubuntu" => Ecosystem::Debian,
         "rocky linux" | "almalinux" | "red hat" | "opensuse" | "suse" | "mageia" | "openeuler"
         | "photon os" => Ecosystem::Rpm,
         "wolfi" | "chainguard" | "alpaquita" | "minimos" => Ecosystem::Alpine,
         "bioconductor" => Ecosystem::Cran,
+        "haskell hackage" => Ecosystem::Hackage,
         "swifturl" => Ecosystem::Swift,
-        other => Ecosystem::from_str(other).unwrap_or(Ecosystem::Generic),
+        // Go records write module versions without the mandatory `v` prefix,
+        // so they order as lenient SemVer rather than as strict Go.
+        "go" | "golang" => Ecosystem::Semver,
+        other => Ecosystem::from_str(other).map_err(|_| {
+            format!("unsupported OSV ecosystem '{name}'; pass ecosystem='generic' to compare with the generic comparator")
+        })?,
+    };
+    Ok(ecosystem)
+}
+
+/// One entry of an OSV range's `events` list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OsvEvent {
+    Introduced(String),
+    Fixed(String),
+    LastAffected(String),
+    Limit(String),
+}
+
+/// Turn the events of one OSV range into affected branches, combined with a
+/// logical or.
+///
+/// An OSV range is an event *timeline*, not a single interval: `introduced`
+/// opens a window and `fixed`/`last_affected` closes it, and a range commonly
+/// carries several pairs (`0 → 1.2.0`, then `2.0.0 → 2.3.0`). Folding the
+/// events into one interval keeps only the last window and silently reports
+/// versions in every earlier one as unaffected.
+///
+/// Events are sorted by version first, as OSV consumers do, so a record whose
+/// `fixed` precedes its `introduced` still reads as one window.
+///
+/// `limit` events gate the whole range: a version is affected only when it
+/// sorts before at least one listed limit, whatever window it falls in. Each
+/// window is therefore paired with every limit as its own branch. A limit of
+/// `*` imposes no gate, and a range without limits has none.
+pub(crate) fn osv_range_windows(
+    ecosystem: Ecosystem,
+    events: &[OsvEvent],
+) -> Result<Vec<Vec<Comparator>>, String> {
+    let unlimited =
+        events.iter().any(|event| matches!(event, OsvEvent::Limit(limit) if limit == "*"));
+    let mut limits = Vec::new();
+    for event in events {
+        if let OsvEvent::Limit(limit) = event
+            && limit != "*"
+            && !unlimited
+        {
+            parse_for_ecosystem(ecosystem, limit)?;
+            limits.push(Comparator { op: RangeOp::Lt, version: limit.clone() });
+        }
     }
+    // `introduced: "0"` is OSV's "since the beginning" sentinel. It sorts
+    // first and is not parsed as a version.
+    let mut timeline = events
+        .iter()
+        .filter(|event| !matches!(event, OsvEvent::Limit(_)))
+        .map(|event| parse_event(ecosystem, event).map(|parsed| (parsed, event)))
+        .collect::<Result<Vec<_>, _>>()?;
+    // An insertion sort is stable and, unlike `sort_by`, cannot panic when a
+    // native comparator such as Maven's is not a total order.
+    for i in 1..timeline.len() {
+        let mut j = i;
+        while j > 0 && event_precedes(ecosystem, &timeline[j], &timeline[j - 1]) {
+            timeline.swap(j, j - 1);
+            j -= 1;
+        }
+    }
+
+    let mut windows = Vec::new();
+    // The clauses of the window that is currently open.
+    let mut open: Option<Vec<Comparator>> = None;
+    for (_, event) in timeline {
+        match event {
+            OsvEvent::Introduced(version) => {
+                // A second `introduced` without an intervening close means the
+                // previous window runs to infinity.
+                if let Some(clauses) = open.take() {
+                    close_window(&mut windows, clauses, None);
+                }
+                let clauses = (version != "0")
+                    .then(|| Comparator { op: RangeOp::Ge, version: version.clone() })
+                    .into_iter()
+                    .collect();
+                open = Some(clauses);
+            }
+            OsvEvent::Fixed(version) => {
+                let clauses = open.take().unwrap_or_default();
+                let fixed = Comparator { op: RangeOp::Lt, version: version.clone() };
+                close_window(&mut windows, clauses, Some(fixed));
+            }
+            OsvEvent::LastAffected(version) => {
+                let clauses = open.take().unwrap_or_default();
+                let last = Comparator { op: RangeOp::Le, version: version.clone() };
+                close_window(&mut windows, clauses, Some(last));
+            }
+            // Limits gate the whole range and were collected above.
+            OsvEvent::Limit(_) => {}
+        }
+    }
+    if let Some(clauses) = open {
+        close_window(&mut windows, clauses, None);
+    }
+    if limits.is_empty() {
+        return Ok(windows);
+    }
+    let mut branches = Vec::with_capacity(windows.len() * limits.len());
+    for window in &windows {
+        for limit in &limits {
+            let mut branch = window.clone();
+            branch.push(limit.clone());
+            branches.push(branch);
+        }
+    }
+    Ok(branches)
+}
+
+fn parse_event(ecosystem: Ecosystem, event: &OsvEvent) -> Result<Option<ParsedRepr>, String> {
+    match event {
+        OsvEvent::Introduced(version) if version == "0" => Ok(None),
+        _ => parse_for_ecosystem(ecosystem, event.version()).map(Some),
+    }
+}
+
+impl OsvEvent {
+    fn version(&self) -> &str {
+        match self {
+            Self::Introduced(version)
+            | Self::Fixed(version)
+            | Self::LastAffected(version)
+            | Self::Limit(version) => version,
+        }
+    }
+}
+
+/// Whether `left` sorts before `right` in an OSV timeline. `introduced: "0"`
+/// comes first, and equal versions keep their input order.
+fn event_precedes(
+    ecosystem: Ecosystem,
+    left: &(Option<ParsedRepr>, &OsvEvent),
+    right: &(Option<ParsedRepr>, &OsvEvent),
+) -> bool {
+    match (&left.0, &right.0) {
+        (None, Some(_)) => true,
+        (_, None) => false,
+        (Some(x), Some(y)) => compare_for_ecosystem(ecosystem, x, y) == Ordering::Less,
+    }
+}
+
+/// Close a window, bounded above by `closing` when the event that closed it
+/// names a version.
+fn close_window(
+    windows: &mut Vec<Vec<Comparator>>,
+    clauses: Vec<Comparator>,
+    closing: Option<Comparator>,
+) {
+    let mut window = clauses;
+    if let Some(closing) = closing {
+        window.push(closing);
+    }
+    windows.push(window);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

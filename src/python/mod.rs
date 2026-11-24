@@ -57,6 +57,7 @@ fn anyver_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(security::purl_ecosystem, m)?)?;
     m.add_function(wrap_pyfunction!(security::build_vers, m)?)?;
     m.add_function(wrap_pyfunction!(security::vers_contains, m)?)?;
+    m.add_function(wrap_pyfunction!(security::osv_ecosystem, m)?)?;
     m.add_function(wrap_pyfunction!(security::osv_affected, m)?)?;
     m.add_function(wrap_pyfunction!(bump::bump_major, m)?)?;
     m.add_function(wrap_pyfunction!(bump::bump_minor, m)?)?;

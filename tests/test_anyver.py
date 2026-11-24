@@ -1502,12 +1502,98 @@ class TestOsvAffected:
         assert anyver.osv_affected("1.1-1", affected)
         assert not anyver.osv_affected("1.2-1", affected)
 
-    def test_unknown_ecosystem_does_not_raise(self):
+    def test_unknown_ecosystem_raises_unless_opted_in(self):
+        """A heuristic comparator is never chosen silently: an unrecognised
+        ecosystem is an error until the caller asks for `generic`."""
         affected = {
             "package": {"ecosystem": "GitHub Actions", "name": "demo"},
             "ranges": [{"type": "ECOSYSTEM", "events": [{"introduced": "0"}, {"fixed": "1.2.0"}]}],
         }
+        with pytest.raises(ValueError, match="unsupported OSV ecosystem"):
+            anyver.osv_affected("1.0.0", affected)
+        assert anyver.osv_affected("1.0.0", affected, ecosystem="generic")
+        assert not anyver.osv_affected("1.2.0", affected, ecosystem="generic")
+
+    def test_unknown_ecosystem_is_resolved_only_when_compared(self):
+        """`SEMVER` and `GIT` ranges and exact `versions` matches never need the
+        package ecosystem."""
+        record = {
+            "package": {"ecosystem": "GitHub Actions", "name": "demo"},
+            "ranges": [{"type": "GIT", "events": [{"introduced": "abc123"}]}],
+            "versions": ["abc123"],
+        }
+        assert anyver.osv_affected("abc123", record)
+        assert not anyver.osv_affected("def456", record)
+        semver_only = {
+            "package": {"ecosystem": "Android", "name": "demo"},
+            "ranges": [{"type": "SEMVER", "events": [{"introduced": "1.0.0"}, {"fixed": "2.0.0"}]}],
+        }
+        assert anyver.osv_affected("1.5.0", semver_only)
+        assert not anyver.osv_affected("2.0.0", semver_only)
+
+    def test_osv_ecosystem_resolves_names(self):
+        assert anyver.osv_ecosystem("Debian:11") == "debian"
+        assert anyver.osv_ecosystem("PyPI") == "pep440"
+        assert anyver.osv_ecosystem("Go") == "semver"
+        assert anyver.osv_ecosystem("Haskell Hackage") == "hackage"
+        with pytest.raises(ValueError, match="ecosystem='generic'"):
+            anyver.osv_ecosystem("Android")
+
+    def test_go_records_compare_without_the_v_prefix(self):
+        affected = {
+            "package": {"ecosystem": "Go", "name": "demo"},
+            "ranges": [
+                {"type": "ECOSYSTEM", "events": [{"introduced": "1.2.0"}, {"fixed": "1.2.4"}]}
+            ],
+        }
+        assert anyver.osv_affected("v1.2.2", affected)
+        assert anyver.osv_affected("1.2.2", affected)
+        assert not anyver.osv_affected("v1.2.4", affected)
+
+    def test_versions_match_other_spellings_of_the_same_release(self):
+        affected = {"package": {"ecosystem": "NuGet"}, "versions": ["1.2.3"]}
+        assert anyver.osv_affected("1.2.3.0", affected)
+        assert not anyver.osv_affected("1.2.4", affected)
+        # An entry the ecosystem cannot parse only matches exactly.
+        affected = {"package": {"ecosystem": "PyPI"}, "versions": ["n/a", "1.0"]}
+        assert anyver.osv_affected("n/a", affected)
         assert anyver.osv_affected("1.0.0", affected)
+
+    def test_limit_gates_the_whole_range(self):
+        """A `limit` gates the whole range: a version is affected only when it
+        sorts before at least one listed limit, so a later `introduced` does not
+        make versions above the limit affected again."""
+        affected = {
+            "ranges": [
+                {
+                    "type": "SEMVER",
+                    "events": [
+                        {"introduced": "0"},
+                        {"limit": "5.2.0"},
+                        {"introduced": "6.0.0"},
+                        {"fixed": "6.0.3"},
+                    ],
+                }
+            ]
+        }
+        for version, expected in [
+            ("4.0.0", True),
+            ("5.2.0", False),
+            ("5.9.9", False),
+            ("6.0.0", False),
+            ("6.0.1", False),
+            ("6.0.3", False),
+        ]:
+            assert anyver.osv_affected(version, affected) is expected, version
+
+    def test_events_are_ordered_before_evaluation(self):
+        """A `fixed` listed before its `introduced` still reads as one window."""
+        affected = {
+            "ranges": [{"type": "SEMVER", "events": [{"fixed": "1.2.0"}, {"introduced": "1.0.0"}]}]
+        }
+        assert not anyver.osv_affected("0.5.0", affected)
+        assert anyver.osv_affected("1.1.0", affected)
+        assert not anyver.osv_affected("2.0.0", affected)
 
     def test_git_ranges_are_skipped(self):
         """GIT ranges carry commit hashes, not versions."""

@@ -1,7 +1,9 @@
-//! Regression tests for the VERS grammar and the OSV ecosystem-name mapping.
+//! Regression tests for the VERS grammar, the OSV ecosystem-name mapping and
+//! event timelines, and PURL construction.
 
 use crate::parser::Ecosystem;
-use crate::security::{Purl, Vers, osv_ecosystem, validate_purl_type};
+use crate::ranges::RangeSet;
+use crate::security::{OsvEvent, Purl, Vers, osv_ecosystem, osv_range_windows, validate_purl_type};
 
 // ====================================================================
 // VERS — spec grammar and containment
@@ -99,35 +101,173 @@ fn test_vers_requires_prefix_and_scheme() {
 // OSV ecosystem names
 // ====================================================================
 
+fn osv(name: &str) -> Ecosystem {
+    osv_ecosystem(name).unwrap_or_else(|error| panic!("{name}: {error}"))
+}
+
 #[test]
 fn test_osv_ecosystem_pypi() {
-    assert_eq!(osv_ecosystem("PyPI"), Ecosystem::Pep440);
+    assert_eq!(osv("PyPI"), Ecosystem::Pep440);
 }
 
 #[test]
 fn test_osv_ecosystem_strips_release_suffix() {
-    assert_eq!(osv_ecosystem("Debian:11"), Ecosystem::Debian);
-    assert_eq!(osv_ecosystem("Alpine:v3.18"), Ecosystem::Alpine);
-    assert_eq!(osv_ecosystem("Ubuntu:22.04:LTS"), Ecosystem::Debian);
-    assert_eq!(osv_ecosystem("Rocky Linux:8"), Ecosystem::Rpm);
+    assert_eq!(osv("Debian:11"), Ecosystem::Debian);
+    assert_eq!(osv("Alpine:v3.18"), Ecosystem::Alpine);
+    assert_eq!(osv("Ubuntu:22.04:LTS"), Ecosystem::Debian);
+    assert_eq!(osv("Rocky Linux:8"), Ecosystem::Rpm);
 }
 
 #[test]
 fn test_osv_ecosystem_known_names() {
-    assert_eq!(osv_ecosystem("npm"), Ecosystem::Npm);
-    assert_eq!(osv_ecosystem("crates.io"), Ecosystem::Crates);
-    assert_eq!(osv_ecosystem("RubyGems"), Ecosystem::Ruby);
-    assert_eq!(osv_ecosystem("Packagist"), Ecosystem::Composer);
-    assert_eq!(osv_ecosystem("Wolfi"), Ecosystem::Alpine);
-    assert_eq!(osv_ecosystem("Bioconductor"), Ecosystem::Cran);
+    assert_eq!(osv("npm"), Ecosystem::Npm);
+    assert_eq!(osv("crates.io"), Ecosystem::Crates);
+    assert_eq!(osv("RubyGems"), Ecosystem::Ruby);
+    assert_eq!(osv("Packagist"), Ecosystem::Composer);
+    assert_eq!(osv("Wolfi"), Ecosystem::Alpine);
+    assert_eq!(osv("Bioconductor"), Ecosystem::Cran);
+    assert_eq!(osv("Haskell Hackage"), Ecosystem::Hackage);
 }
 
 #[test]
-fn test_osv_ecosystem_unknown_falls_back_to_generic() {
-    // An unmapped ecosystem must not fail the whole record.
-    assert_eq!(osv_ecosystem("GitHub Actions"), Ecosystem::Generic);
-    assert_eq!(osv_ecosystem("OSS-Fuzz"), Ecosystem::Generic);
-    assert_eq!(osv_ecosystem("Android"), Ecosystem::Generic);
+fn test_osv_go_orders_as_lenient_semver() {
+    // OSV writes Go module versions without the mandatory `v` prefix.
+    assert_eq!(osv("Go"), Ecosystem::Semver);
+    let affected = [OsvEvent::Introduced("1.2.0".into()), OsvEvent::Fixed("1.2.4".into())];
+    let windows = osv_range_windows(osv("Go"), &affected).unwrap();
+    let windows = RangeSet { branches: windows };
+    assert!(windows.contains_bounds(Ecosystem::Semver, "v1.2.2").unwrap());
+    assert!(windows.contains_bounds(Ecosystem::Semver, "1.2.2").unwrap());
+    assert!(!windows.contains_bounds(Ecosystem::Semver, "1.2.4").unwrap());
+}
+
+#[test]
+fn test_osv_ecosystem_unknown_is_an_error() {
+    // An unmapped ecosystem must not silently fall back to a heuristic
+    // comparator; the caller opts into `generic` explicitly instead.
+    for name in ["GitHub Actions", "OSS-Fuzz", "Android"] {
+        let error = osv_ecosystem(name).unwrap_err();
+        assert!(error.contains("unsupported OSV ecosystem"), "{name}: {error}");
+        assert!(error.contains("ecosystem='generic'"), "{name}: {error}");
+    }
+}
+
+// ====================================================================
+// OSV event timelines
+// ====================================================================
+
+fn affected(ecosystem: Ecosystem, events: &[OsvEvent], version: &str) -> bool {
+    let windows = osv_range_windows(ecosystem, events).unwrap();
+    RangeSet { branches: windows }.contains_bounds(ecosystem, version).unwrap()
+}
+
+fn introduced(version: &str) -> OsvEvent {
+    OsvEvent::Introduced(version.into())
+}
+fn fixed(version: &str) -> OsvEvent {
+    OsvEvent::Fixed(version.into())
+}
+fn limit(version: &str) -> OsvEvent {
+    OsvEvent::Limit(version.into())
+}
+
+#[test]
+fn test_osv_limit_gates_the_whole_range() {
+    // A version is affected only when it sorts before at least one listed
+    // limit, whatever window it falls in. A later `introduced` does not make
+    // versions above the limit affected again.
+    let events = [introduced("0"), limit("5.2.0"), introduced("6.0.0"), fixed("6.0.3")];
+    let npm = Ecosystem::Npm;
+    assert!(affected(npm, &events, "4.0.0"));
+    assert!(!affected(npm, &events, "5.2.0"));
+    assert!(!affected(npm, &events, "5.9.9"));
+    assert!(!affected(npm, &events, "6.0.0"));
+    assert!(!affected(npm, &events, "6.0.1"));
+    assert!(!affected(npm, &events, "6.0.3"));
+}
+
+#[test]
+fn test_osv_limit_gates_every_window_wherever_it_is_listed() {
+    let npm = Ecosystem::Npm;
+    let leading = [limit("0.5.0"), introduced("1.0.0"), fixed("2.0.0")];
+    assert!(!affected(npm, &leading, "1.5.0"));
+    assert!(!affected(npm, &leading, "0.2.0"));
+    let trailing = [introduced("0"), fixed("1.0.0"), introduced("2.0.0"), limit("0.5.0")];
+    assert!(affected(npm, &trailing, "0.2.0"));
+    assert!(!affected(npm, &trailing, "0.7.0"));
+    assert!(!affected(npm, &trailing, "2.5.0"));
+}
+
+#[test]
+fn test_osv_limit_gate_does_not_replace_the_window() {
+    // Sorting before the limit is necessary, not sufficient: the version must
+    // also fall in a window.
+    let events = [introduced("2.0.0"), fixed("3.0.0"), limit("5.0.0")];
+    let npm = Ecosystem::Npm;
+    assert!(!affected(npm, &events, "1.0.0"));
+    assert!(affected(npm, &events, "2.5.0"));
+    assert!(!affected(npm, &events, "3.0.0"));
+}
+
+#[test]
+fn test_osv_version_needs_to_precede_a_single_limit() {
+    let events = [introduced("2.0.0"), limit("3.0.0"), limit("2.1.0")];
+    let npm = Ecosystem::Npm;
+    assert!(affected(npm, &events, "2.9.9"));
+    assert!(!affected(npm, &events, "3.0.0"));
+}
+
+#[test]
+fn test_osv_star_limit_lifts_every_limit() {
+    let events = [limit("*"), introduced("0"), fixed("1.0.0"), introduced("2.0.0"), limit("2.1.0")];
+    let npm = Ecosystem::Npm;
+    assert!(affected(npm, &events, "0.9.0"));
+    assert!(affected(npm, &events, "2.9.9"));
+    assert!(!affected(npm, &events, "1.5.0"));
+}
+
+#[test]
+fn test_osv_invalid_limit_is_an_error() {
+    let events = [introduced("0"), limit("not-a-version")];
+    assert!(osv_range_windows(Ecosystem::Npm, &events).is_err());
+}
+
+#[test]
+fn test_osv_events_are_sorted_before_evaluation() {
+    // A `fixed` listed before its `introduced` still reads as one window.
+    let events = [fixed("1.2.0"), introduced("1.0.0")];
+    let npm = Ecosystem::Npm;
+    assert!(!affected(npm, &events, "0.5.0"));
+    assert!(affected(npm, &events, "1.1.0"));
+    assert!(!affected(npm, &events, "2.0.0"));
+}
+
+#[test]
+fn test_osv_equal_versions_keep_input_order() {
+    // Branch boundaries that share a version stay closed-then-opened, and a
+    // window that opens and closes on one version stays empty.
+    let npm = Ecosystem::Npm;
+    let branches = [introduced("0"), fixed("1.0.0"), introduced("1.0.0"), fixed("2.0.0")];
+    assert!(affected(npm, &branches, "0.9.0"));
+    assert!(affected(npm, &branches, "1.0.0"));
+    assert!(!affected(npm, &branches, "2.0.0"));
+    let empty = [introduced("1.0.0"), fixed("1.0.0")];
+    assert!(!affected(npm, &empty, "1.0.0"));
+    assert!(!affected(npm, &empty, "9.0.0"));
+}
+
+#[test]
+fn test_osv_maven_timeline_does_not_panic() {
+    // Maven's comparator has a cycle; sorting must tolerate it.
+    let events =
+        [introduced("1-foo.sp-0"), introduced("1-foo-alpha"), fixed("1-foo"), introduced("1")];
+    assert!(osv_range_windows(Ecosystem::Maven, &events).is_ok());
+}
+
+#[test]
+fn test_osv_invalid_event_version_is_an_error() {
+    let events = [introduced("not-a-version")];
+    assert!(osv_range_windows(Ecosystem::Npm, &events).is_err());
 }
 
 // ====================================================================

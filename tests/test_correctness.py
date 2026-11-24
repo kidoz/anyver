@@ -549,6 +549,9 @@ def test_exact_semver_suffix_is_not_a_wildcard(bound):
 
 
 def test_osv_limits_apply_to_the_whole_range():
+    """A `limit` gates the whole range: a version must precede at least one
+    listed limit, whatever window it falls in. A limit of `*` lifts every
+    limit on the range."""
     events = [
         {"introduced": "0"},
         {"fixed": "1.0.0"},
