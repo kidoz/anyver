@@ -1,7 +1,7 @@
 //! Regression tests for the VERS grammar and the OSV ecosystem-name mapping.
 
 use crate::parser::Ecosystem;
-use crate::security::{Vers, osv_ecosystem};
+use crate::security::{Purl, Vers, osv_ecosystem, validate_purl_type};
 
 // ====================================================================
 // VERS — spec grammar and containment
@@ -128,6 +128,71 @@ fn test_osv_ecosystem_unknown_falls_back_to_generic() {
     assert_eq!(osv_ecosystem("GitHub Actions"), Ecosystem::Generic);
     assert_eq!(osv_ecosystem("OSS-Fuzz"), Ecosystem::Generic);
     assert_eq!(osv_ecosystem("Android"), Ecosystem::Generic);
+}
+
+// ====================================================================
+// PURL
+// ====================================================================
+
+#[test]
+fn test_purl_components_cannot_change_the_structure() {
+    let purl = Purl {
+        package_type: "npm".into(),
+        namespace: Some("a@b/c?d".into()),
+        name: "foo/bar@1.0.0".into(),
+        version: Some("1.0.0+build/x".into()),
+        qualifiers: Some("a=b#c".into()),
+        subpath: Some("dir with space/file".into()),
+    };
+    assert_eq!(
+        purl.to_purl(),
+        "pkg:npm/a%40b/c%3Fd/foo%2Fbar%401.0.0@1.0.0+build%2Fx?a=b%23c#dir%20with%20space/file"
+    );
+    let parsed = Purl::parse(&purl.to_purl()).unwrap();
+    assert_eq!(parsed.name, "foo%2Fbar%401.0.0");
+    assert_eq!(parsed.version.as_deref(), Some("1.0.0+build%2Fx"));
+    assert_eq!(parsed.qualifiers.as_deref(), Some("a=b%23c"));
+}
+
+#[test]
+fn test_purl_subpath_encodes_the_fragment_separator() {
+    let purl = Purl {
+        package_type: "npm".into(),
+        namespace: None,
+        name: "name".into(),
+        version: None,
+        qualifiers: None,
+        subpath: Some("docs/index#section".into()),
+    };
+    assert_eq!(purl.to_purl(), "pkg:npm/name#docs/index%23section");
+    let parsed = Purl::parse(&purl.to_purl()).unwrap();
+    assert_eq!(parsed.subpath.as_deref(), Some("docs/index%23section"));
+}
+
+#[test]
+fn test_purl_keeps_version_and_name_characters_literal() {
+    let purl = Purl {
+        package_type: "deb".into(),
+        namespace: Some("debian".into()),
+        name: "libstdc++6".into(),
+        version: Some("1:12.2.0-3+build1".into()),
+        qualifiers: Some("arch=i386&distro=jessie".into()),
+        subpath: None,
+    };
+    assert_eq!(
+        purl.to_purl(),
+        "pkg:deb/debian/libstdc++6@1:12.2.0-3+build1?arch=i386&distro=jessie"
+    );
+}
+
+#[test]
+fn test_purl_type_must_be_a_type() {
+    assert!(validate_purl_type("npm").is_ok());
+    assert!(validate_purl_type("github").is_ok());
+    assert!(validate_purl_type("oci").is_ok());
+    for invalid in ["", "npm/x", "npm?y", "npm#z", "1npm", "np m", "npm@x"] {
+        assert!(validate_purl_type(invalid).is_err(), "{invalid:?}");
+    }
 }
 
 // ====================================================================

@@ -6,9 +6,9 @@ use pyo3::types::{PyDict, PyList};
 
 use crate::parser::Ecosystem;
 use crate::ranges::{Comparator, RangeOp, RangeSet, cmp_versions};
-use crate::security::{Purl, Vers, osv_ecosystem};
+use crate::security::{Purl, Vers, osv_ecosystem, validate_purl_type};
 
-use super::conv::eco_from_str;
+use super::conv::{eco_from_str, value_error};
 
 fn purl_to_dict<'py>(py: Python<'py>, purl: &Purl) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
@@ -24,7 +24,7 @@ fn purl_to_dict<'py>(py: Python<'py>, purl: &Purl) -> PyResult<Bound<'py, PyDict
 
 #[pyfunction]
 pub(crate) fn parse_purl<'py>(py: Python<'py>, purl: &str) -> PyResult<Bound<'py, PyDict>> {
-    let parsed = Purl::parse(purl).map_err(PyValueError::new_err)?;
+    let parsed = Purl::parse(purl).map_err(value_error)?;
     purl_to_dict(py, &parsed)
 }
 
@@ -38,10 +38,12 @@ pub(crate) fn build_purl(
     subpath: Option<&str>,
 ) -> PyResult<String> {
     if package_type.trim().is_empty() || name.trim().is_empty() {
-        return Err(PyValueError::new_err("package_type and name are required"));
+        return Err(value_error("package_type and name are required"));
     }
+    let package_type = package_type.to_ascii_lowercase();
+    validate_purl_type(&package_type).map_err(value_error)?;
     let purl = Purl {
-        package_type: package_type.to_ascii_lowercase(),
+        package_type,
         namespace: namespace.map(str::to_string),
         name: name.to_string(),
         version: version.map(str::to_string),
@@ -53,20 +55,20 @@ pub(crate) fn build_purl(
 
 #[pyfunction]
 pub(crate) fn purl_ecosystem(purl: &str) -> PyResult<Option<&'static str>> {
-    let parsed = Purl::parse(purl).map_err(PyValueError::new_err)?;
+    let parsed = Purl::parse(purl).map_err(value_error)?;
     Ok(parsed.ecosystem().map(Ecosystem::as_str))
 }
 
 #[pyfunction]
 pub(crate) fn vers_contains(vers: &str, version: &str) -> PyResult<bool> {
-    let parsed = Vers::parse(vers).map_err(PyValueError::new_err)?;
-    parsed.contains(version).map_err(PyValueError::new_err)
+    let parsed = Vers::parse(vers).map_err(value_error)?;
+    parsed.contains(version).map_err(value_error)
 }
 
 #[pyfunction(signature = (ecosystem, range))]
 pub(crate) fn build_vers(ecosystem: &str, range: &str) -> PyResult<String> {
     let eco = eco_from_str(ecosystem)?;
-    let vers = Vers::new(eco, range).map_err(PyValueError::new_err)?;
+    let vers = Vers::new(eco, range).map_err(value_error)?;
     Ok(vers.to_vers())
 }
 

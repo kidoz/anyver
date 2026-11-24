@@ -93,24 +93,58 @@ impl Purl {
     pub(crate) fn to_purl(&self) -> String {
         let mut out = format!("pkg:{}/", self.package_type);
         if let Some(namespace) = &self.namespace {
-            out.push_str(namespace);
+            let namespace =
+                namespace.split('/').map(|part| purl_encode(part, b"@?#")).collect::<Vec<_>>();
+            out.push_str(&namespace.join("/"));
             out.push('/');
         }
-        out.push_str(&self.name);
+        out.push_str(&purl_encode(&self.name, b"/@?#"));
         if let Some(version) = &self.version {
             out.push('@');
-            out.push_str(version);
+            out.push_str(&purl_encode(version, b"/@?#"));
         }
         if let Some(qualifiers) = &self.qualifiers {
             out.push('?');
-            out.push_str(qualifiers);
+            out.push_str(&purl_encode(qualifiers, b"#"));
         }
         if let Some(subpath) = &self.subpath {
             out.push('#');
-            out.push_str(subpath);
+            out.push_str(&purl_encode(subpath, b"#"));
         }
         out
     }
+}
+
+/// Percent-encode what would change how a purl is split: the separators
+/// `structural` lists for this component, plus whitespace, control characters
+/// and non-ASCII bytes. `+` and `:` stay literal because versions such as
+/// `1.0.0+build` and docker digests rely on them, and `%` stays literal so
+/// that already-encoded input (`%40scope`) is not encoded twice.
+fn purl_encode(component: &str, structural: &[u8]) -> String {
+    let mut out = String::with_capacity(component.len());
+    for byte in component.bytes() {
+        if byte.is_ascii_graphic() && !structural.contains(&byte) {
+            out.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            // Writing into a `String` cannot fail.
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
+}
+
+/// A purl type is lowercase letters and digits plus `.`, `+` and `-`, and it
+/// starts with a letter. Anything else (`npm/x`, `npm?y`) would change how the
+/// resulting purl is split.
+pub(crate) fn validate_purl_type(package_type: &str) -> Result<(), String> {
+    let mut bytes = package_type.bytes();
+    if bytes.next().is_some_and(|b| b.is_ascii_alphabetic())
+        && bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-'))
+    {
+        return Ok(());
+    }
+    Err(format!("invalid purl type: '{package_type}'"))
 }
 
 /// Map an OSV `affected.package.ecosystem` value onto a comparison algorithm.

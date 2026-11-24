@@ -582,6 +582,62 @@ def test_build_vers_uses_the_purl_type_for_alpine():
 
 
 @pytest.mark.parametrize(
+    "kwargs,expected",
+    [
+        ({"package_type": "npm", "name": "a/b"}, "pkg:npm/a%2Fb"),
+        ({"package_type": "npm", "name": "foo@1.0.0"}, "pkg:npm/foo%401.0.0"),
+        ({"package_type": "npm", "name": "x?y=1"}, "pkg:npm/x%3Fy=1"),
+        ({"package_type": "npm", "name": "foo#bar"}, "pkg:npm/foo%23bar"),
+        ({"package_type": "npm", "name": "with space"}, "pkg:npm/with%20space"),
+        (
+            {"package_type": "npm", "name": "name", "namespace": "a@b/c?d"},
+            "pkg:npm/a%40b/c%3Fd/name",
+        ),
+        (
+            {"package_type": "npm", "name": "name", "version": "1.0.0/x@y"},
+            "pkg:npm/name@1.0.0%2Fx%40y",
+        ),
+        # `+`, `:` and an existing `%` stay literal.
+        (
+            {"package_type": "npm", "name": "name", "version": "1.0.0+build"},
+            "pkg:npm/name@1.0.0+build",
+        ),
+        (
+            {"package_type": "deb", "name": "libstdc++6", "version": "1:12.2.0-3"},
+            "pkg:deb/libstdc++6@1:12.2.0-3",
+        ),
+        ({"package_type": "npm", "name": "name", "namespace": "%40scope"}, "pkg:npm/%40scope/name"),
+        (
+            {"package_type": "npm", "name": "name", "subpath": "docs/index#section"},
+            "pkg:npm/name#docs/index%23section",
+        ),
+    ],
+)
+def test_build_purl_cannot_change_the_structure(kwargs, expected):
+    assert anyver.build_purl(**kwargs) == expected
+
+
+def test_build_purl_keeps_component_identity():
+    parsed = anyver.parse_purl(anyver.build_purl("npm", "foo@1.0.0"))
+    assert (parsed["name"], parsed["version"]) == ("foo%401.0.0", None)
+    parsed = anyver.parse_purl(anyver.build_purl("npm", "a/b"))
+    assert (parsed["namespace"], parsed["name"]) == (None, "a%2Fb")
+    parsed = anyver.parse_purl(anyver.build_purl("npm", "x", qualifiers="a=b", subpath="d/e f"))
+    assert (parsed["name"], parsed["qualifiers"], parsed["subpath"]) == ("x", "a=b", "d/e%20f")
+    # A `#` inside the subpath is encoded rather than ending the purl early.
+    purl = anyver.build_purl("npm", "x", version="1.0.0", subpath="docs/index#section")
+    parsed = anyver.parse_purl(purl)
+    assert (parsed["version"], parsed["subpath"]) == ("1.0.0", "docs/index%23section")
+    assert anyver.build_purl("npm", "x", version="1.0.0", subpath="docs/index%23section") == purl
+
+
+@pytest.mark.parametrize("package_type", ["npm/x", "npm?y", "npm@1", "1npm", "np m", ""])
+def test_build_purl_rejects_invalid_types(package_type):
+    with pytest.raises(ValueError):
+        anyver.build_purl(package_type, "name")
+
+
+@pytest.mark.parametrize(
     "spec,version,expected",
     [
         ("==1.2.3.*", "1.2.3", True),
