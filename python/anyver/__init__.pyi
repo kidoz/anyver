@@ -87,11 +87,11 @@ class Version:
         """Tuple key for ordering versions within one ecosystem.
 
         Debian and RPM keys reproduce native comparison, including unbounded
-        numeric runs. Maven returns a total order: ordinary releases and
-        qualifiers match compare(), but a qualifier compared with a nested
-        list can disagree. compare() still preserves Maven's cycle, for
-        example `1-foo.sp-0 < 1-foo-alpha`, while the key sorts
-        `1-foo-alpha < 1-foo < 1-foo.sp-0`.
+        numeric runs, as do Alpine keys and the generic modes. Maven returns a
+        total order: ordinary releases and qualifiers match compare(), but a
+        qualifier compared with a nested list can disagree. compare() still
+        preserves Maven's cycle, for example `1-foo.sp-0 < 1-foo-alpha`, while
+        the key sorts `1-foo-alpha < 1-foo < 1-foo.sp-0`.
         RubyGems and Arch also use total-order keys when their native
         comparison rules give different ordering to versions that compare equal.
         """
@@ -130,7 +130,11 @@ def satisfies(version: str, constraint: str, ecosystem: str = "generic") -> bool
 
     Supports operators `>=`, `<=`, `>`, `<`, `==`, `!=`, combined with commas
     for AND and `||` for OR. Also supports npm-style shorthand: `^1.2.3`,
-    `~1.2`, `1.2.x`, `*`.
+    `~1.2`, `1.2.x`, `*`. A wildcard may sit at any depth (`1.2.3.*`) and
+    keeps an epoch (`==1!1.2.*`) and accepts a `v` prefix (`v1.2.x`). In npm
+    mode a bare complete version is an exact match, a bare partial one is an
+    x-range, `=` is plain equality, and `1.2.3 - 2.3.4` is a hyphen range. A
+    comparison operator inside a version (`>>1.0`) raises `ValueError`.
     """
 
 def range_contains(version: str, range: str, ecosystem: str = "generic") -> bool:
@@ -150,16 +154,25 @@ def build_purl(
     namespace: str | None = None,
     qualifiers: str | None = None,
     subpath: str | None = None,
-) -> str: ...
+) -> str:
+    """Join the components into a `pkg:` string.
+
+    Characters that would change how the purl is split (`/`, `@`, `?`, `#` in
+    a component or subpath, whitespace) are percent-encoded, so a name cannot
+    inject a namespace, version, qualifier or subpath. `%` is left alone, so
+    already-encoded input such as `%40scope` is not encoded twice. Raises
+    `ValueError` for a missing name or a type that is not a purl type.
+    """
+
 def purl_ecosystem(purl: str) -> str | None: ...
 def build_vers(ecosystem: str, range: str) -> str:
     """Build a canonical `vers:` range string.
 
     The versioning scheme is the PURL type, so `pep440` and `pypi` both emit
-    `vers:pypi/...`. Constraints are joined with `|`; `,` and whitespace are
-    accepted on input. npm/cargo shorthand (`^1.2.3`, `~1.2`) is rejected —
-    VERS has no equivalent. Raises `ValueError` on an empty range; pass `*` to
-    match every version.
+    `vers:pypi/...` and `alpine` emits `vers:apk/...`. Constraints are
+    joined with `|`; `,` and whitespace are accepted on input. npm/cargo
+    shorthand (`^1.2.3`, `~1.2`) is rejected — VERS has no equivalent. Raises
+    `ValueError` on an empty range; pass `*` to match every version.
     """
 
 def vers_contains(vers: str, version: str) -> bool:
@@ -169,13 +182,23 @@ def vers_contains(vers: str, version: str) -> bool:
     contains 1.2.3 as well as everything in `[2.0.0, 5.0.0)`.
     """
 
+def osv_ecosystem(name: str) -> str:
+    """Map an OSV ecosystem name (`Debian:11`, `PyPI`, `Go`) to the anyver
+    ecosystem that orders its versions. Raises `ValueError` for a name anyver
+    does not recognise.
+    """
+
 def osv_affected(version: str, affected: dict[str, Any], ecosystem: str | None = None) -> bool:
     """Test a version against an OSV `affected` entry.
 
     Each `introduced` → `fixed`/`last_affected` pair in a range is a separate
-    affected window. `type: "GIT"` ranges are skipped. When `ecosystem` is
-    omitted it is read from `affected["package"]["ecosystem"]`, including OSV's
-    release suffix (`Debian:11`); unrecognised names fall back to `generic`.
+    affected window, and events are ordered by version before evaluation. A
+    `limit` gates the whole range: a version is affected only when it sorts
+    before at least one listed limit. `type: "GIT"` ranges are skipped.
+    When `ecosystem` is omitted it is read from
+    `affected["package"]["ecosystem"]`, including OSV's release suffix
+    (`Debian:11`). An ecosystem anyver does not recognise raises `ValueError`;
+    pass `ecosystem="generic"` to compare with the generic comparator instead.
     """
 
 # --- Version bumping ---

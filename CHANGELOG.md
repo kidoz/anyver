@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+Security-interoperability and range results change. Most visibly,
+`osv_affected()` raises `ValueError` for an ecosystem it does not recognise
+instead of silently comparing with the generic order, and stored keys change
+for Alpine and for components wider than `u64`.
+
+### Added
+- `osv_ecosystem(name)` maps an OSV ecosystem name (`Debian:11`, `Go`) to the
+  anyver ecosystem that orders its versions, raising `ValueError` for an
+  unknown name.
+- npm ranges accept a bare complete version as an exact match, a bare partial
+  one as an x-range, `=` as plain equality, and hyphen ranges (`1.2.3 - 2.3.4`).
+- Wildcards work at any depth (`1.2.3.*`, `1.2.3.4.x`), keep an epoch
+  (`==1!1.2.*`, `1:2.x`), and accept a `v` prefix (`v1.2.x`).
+- `Haskell Hackage` is recognised as an OSV ecosystem.
+
+### Changed
+- `osv_affected()` raises `ValueError` for an unrecognised ecosystem instead
+  of silently falling back to the generic comparator. `SEMVER` and `GIT`
+  ranges and exact `versions` matches never need the ecosystem; pass
+  `ecosystem="generic"` to keep the generic comparison.
+- OSV events are ordered by version before evaluation, Go records compare as
+  SemVer, and `versions` entries match any spelling the ecosystem compares
+  equal. `limit` events keep gating the whole range.
+- PEP 440 prefix matching (`==1.2.*`) includes the pre- and development
+  releases of `1.2` itself.
+- `build_purl()` percent-encodes characters that would change the purl
+  structure, including `#` in a subpath, and validates the type.
+- A component wider than `u64` keeps its exact value in the generic modes and
+  in Alpine instead of saturating or wrapping around; `major`, `minor`,
+  `patch`, `segments()` and `release()` return it as a Python `int`, and the
+  bump helpers raise `ValueError` for it. Stored keys change for Alpine and
+  for such components: regenerate persisted `sort_key()` values.
+- `Version.__hash__` is randomized per process, like Python's string hashes;
+  persist `sort_key()` instead of a hash.
+
+### Fixed
+- A comparison operator inside a range version (`>>1.0`, `>=1.0 <<2.0`) raises
+  `ValueError` instead of being compared as text.
+- Error messages that quote an input are capped at 400 characters.
+
 ## [2.1.0] - 2026-11-18
 
 Minor release: Hackage/Cabal and Java 9+ JDK runtime versions join the

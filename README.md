@@ -113,6 +113,9 @@ anyver.satisfies("1.0.0-alpha", ">1.0.0")      # False
 
 # Works with any ecosystem
 anyver.satisfies("5.14.0-503.19.1.el9_5", ">=5.14.0-427.0.0.el9_4", ecosystem="rpm")
+
+# A mistyped operator is an error, not a version compared as text
+anyver.satisfies("1.5.0", ">>1.0")   # ValueError
 ```
 
 Range helpers also support OR with `||`, npm/Cargo-style caret and tilde ranges, x-ranges, Maven/NuGet interval notation, and Terraform-style `~>`:
@@ -173,6 +176,14 @@ according to its own rules; local labels affect equality in that ecosystem.
 For strict validation, pass an explicit ecosystem to `Version.try_parse()`.
 Generic parsing and the auto mode's generic fallback remain permissive.
 
+Hash values are randomized per process, like Python's own string hashes, so
+they must not be persisted; store `sort_key()` instead.
+
+A numeric component wider than `u64` keeps its exact value in the generic modes
+(`1.18446744073709551616` is greater than `1.18446744073709551615`), and
+`major`, `minor`, `patch`, `segments()` and `release()` return it as a Python
+`int`. The bump helpers raise `ValueError` for such a component.
+
 ## Ecosystem Auto-Detection
 
 By default, `Version()` and `anyver.version()` use `ecosystem="auto"` — the library inspects the version string and picks the best ecosystem automatically:
@@ -208,12 +219,15 @@ Detection rules (in priority order):
 2. `~` → Debian, `^` → RPM
 3. `.post`, `.dev` → PEP 440
 4. `+incompatible` → Go, `-SNAPSHOT` → Maven
-5. `_alpha`, `_beta`, `_rc`, `_p`, `-rN` → Alpine
-6. `+deb`, `+ubuntu` → Debian; `.el`, `.fc`, `.amzn` → RPM
-7. Digit-letter patterns like `1a1`, `1b2`, `1rc1` → PEP 440
-8. Dot-separated `.pre`, `.rc`, `.beta`, `.alpha` (no hyphens) → Ruby
-9. Year-like first segment (1990-2100) → CalVer
-10. Otherwise → Generic
+5. `py` together with `_` → Conda (`1.0-py38_0`)
+6. `_alpha`, `_beta`, `_rc`, `_p` → Alpine
+7. `+deb`, `+ubuntu` → Debian; `.el`, `.fc`, `.amzn` → RPM
+8. Digit-letter patterns like `1a1`, `1b2`, `1rc1` → PEP 440; a trailing `-rN` → Alpine
+9. Dot-separated `.pre`, `.rc`, `.beta`, `.alpha` (no hyphens) → Ruby
+10. Year-like first segment (1990-2100) → CalVer
+11. Otherwise → Generic
+
+A detected ecosystem whose parser rejects the string falls back to `generic`.
 
 ## Ecosystem-Specific Comparison
 
@@ -258,13 +272,15 @@ manager can impose its own input limits and range rules. The `dart` and
 `julia` modes ignore build metadata under this comparator.
 
 The generic modes use anyver's segment ordering and can differ from the
-package managers' comparators. CalVer schemes and Docker tags have
+package managers' comparators. Their numeric components keep full precision,
+including those wider than `u64`. CalVer schemes and Docker tags have
 project-specific precedence. Docker mode validates tag syntax and uses the
 generic comparator for ordering.
 
 NuGet compares prerelease labels case-insensitively and ignores build
 metadata. Alpine follows apk-tools 3 ordering, including commit suffixes and
-package revisions. For example, `1.0_pre < 1.0_rc < 1.0 < 1.0-r0`. CPAN
+package revisions, and orders numeric components as digit strings of any
+width. For example, `1.0_pre < 1.0_rc < 1.0 < 1.0-r0`. CPAN
 normalizes decimal and dotted forms, such as `1.002003 == v1.2.3`, and marks
 developer releases with underscores as prereleases.
 
@@ -311,9 +327,9 @@ Version("1.2.3-rc.1").sort_key()
 > **Scope:** keys order versions within a single ecosystem. The keys
 > reproduce comparison except where native rules prevent a total order.
 > Compare keys only from the same ecosystem. Numeric values retain their full
-> precision, including Debian/RPM digit runs wider than `u64` and Maven's
-> arbitrary-precision numbers. The tuple shape is experimental; regenerate
-> stored keys after upgrading.
+> precision, including digit runs wider than `u64` in the generic modes,
+> Debian, RPM and Alpine, and Maven's arbitrary-precision numbers. The tuple
+> shape is experimental; regenerate stored keys after upgrading.
 >
 > Maven `sort_key()` is a total order for database sorting. It matches
 > `compare()` for ordinary releases and qualifiers, and versions Maven treats
@@ -370,7 +386,7 @@ anyver.osv_affected("2.1.0", affected)  # True  — second window
 
 **VERS.** `vers:` strings follow the [PURL-spec VERS grammar][vers]: constraints
 are separated by `|` and the versioning scheme is the PURL type (`pypi`, not
-`pep440`). Constraints form a *set*, not a conjunction — `1.2.3|>=2.0.0|<5.0.0`
+`pep440`; `apk` for Alpine). Constraints form a *set*, not a conjunction — `1.2.3|>=2.0.0|<5.0.0`
 matches 1.2.3 as well as everything in `[2.0.0, 5.0.0)`. `,` and whitespace are
 still accepted as separators on input for compatibility, but `build_vers()`
 always emits the canonical `|` form. Use `satisfies()` for npm/cargo-style
@@ -378,22 +394,51 @@ shorthand (`^1.2.3`, `~1.2`, `1.2.x`); VERS has no shorthand syntax.
 
 **OSV.** Each `introduced` → `fixed`/`last_affected` pair in a range is its own
 affected window, and a range with several pairs matches versions in any of them.
-An explicit `limit` caps the whole range. A version must precede at least one
-listed limit, and a limit of `*` admits every version to the window check.
+Events are ordered by version before evaluation, so a `fixed` listed before its
+`introduced` still reads as one window. A `limit` gates the whole range: a
+version is affected only when it sorts before at least one listed limit,
+whatever window it falls in, and a limit of `*` imposes no gate.
 `type: "SEMVER"` always uses strict SemVer ordering, including for packages
 whose ecosystem normally uses another comparator. `type: "ECOSYSTEM"` uses
 the package ecosystem (or explicit override). OSV windows compare version
 bounds directly and do not apply npm range prerelease admission.
 `type: "GIT"` ranges are skipped, since their events are commit hashes rather
 than versions. Ecosystem names are read as OSV writes them, including the
-release suffix (`Debian:11`, `Alpine:v3.18`); an ecosystem anyver doesn't
-recognise falls back to the generic comparator rather than raising.
+release suffix (`Debian:11`, `Alpine:v3.18`). Go records compare as SemVer,
+because OSV writes module versions without the `v` prefix. An entry in
+`versions` matches its exact spelling or any spelling the ecosystem compares
+equal (`1.2.3.0` for NuGet's `1.2.3`).
+
+An ecosystem anyver doesn't recognise raises `ValueError` instead of silently
+comparing with the generic order. `SEMVER` and `GIT` ranges and exact `versions`
+matches never need the ecosystem; only an `ECOSYSTEM` range does. Pass
+`ecosystem="generic"` to opt into that comparison, or resolve names up front:
+
+```python
+anyver.osv_ecosystem("Debian:11")   # "debian"
+anyver.osv_ecosystem("Go")          # "semver"
+
+affected = {
+    "package": {"ecosystem": "Android", "name": "demo"},
+    "ranges": [{"events": [{"introduced": "1.0.0"}, {"fixed": "2.0.0"}]}],
+}
+anyver.osv_affected("1.5.0", affected)                        # ValueError
+anyver.osv_affected("1.5.0", affected, ecosystem="generic")   # True
+```
 
 **Ranges.** A blank range is an error, not a universal match — pass `*` to match
 every version. npm ranges admit prereleases only when that same AND branch
 explicitly references a prerelease on the same major/minor/patch tuple.
 An npm intersection requires a version admitted by both branches.
-Wildcards apply to complete release-number components. PEP 440 compatible-release bounds accept the usual optional `v` prefix.
+Wildcards apply to complete release-number components at any depth (`1.2.3.*`,
+`1.2.3.4.x`) and keep an epoch (`==1!1.2.*`). In PEP 440, prefix matching
+(`==1.2.*`) also covers the pre- and development releases of `1.2` itself.
+In npm mode a bare complete version is an exact match, a bare partial one is an
+x-range, `=` is plain equality, and `1.2.3 - 2.3.4` is a hyphen range. A
+comparison operator inside a version (`>>1.0`, `>=1.0 <<2.0`) raises `ValueError`.
+PEP 440 ranges compare by ordering rather than by pip's exclusive-comparison
+rules, so `>0.1.1` matches `0.1.1.post3` and `<1.2` matches `1.2rc1`.
+PEP 440 compatible-release bounds accept the usual optional `v` prefix.
 `~=1.4` accepts later 1.x releases, and `~=1.4.0` accepts later 1.4.x releases.
 Caret and tilde ranges preserve prerelease lower bounds. Pessimistic `~>1.2`
 means `>=1.2.0,<2.0.0`, while `~>1.2.3` means `>=1.2.3,<1.3.0`.
@@ -402,7 +447,11 @@ An upper-bound increment beyond `u64::MAX` raises `ValueError`.
 [vers]: https://github.com/package-url/purl-spec/blob/main/VERSION-RANGE-SPEC.rst
 
 > **Note:** PURL components are returned exactly as they appear in the string;
-> percent-encoded values (`%40scope`) are not decoded.
+> percent-encoded values (`%40scope`) are not decoded. `build_purl()` encodes
+> the characters that would change how a purl is split (`/`, `@`, `?`, `#` and
+> whitespace), so a name cannot inject a namespace or a version, and raises
+> `ValueError` for a type that is not a purl type. `+` and `:` stay literal and
+> `%` is left alone, so already-encoded input is not encoded twice.
 
 ## Cross-Ecosystem Examples
 
