@@ -25,7 +25,7 @@ dynamic = ["version"]
 [project.optional-dependencies]
 test = ["pytest>=9.2.0"]
 bench = ["pytest>=9.2.0", "pytest-benchmark>=5.3.1"]
-lint = ["ruff>=0.17.5"]
+lint = ["ruff>=0.17.6"]
 
 [tool.maturin]
 python-source = "python"
