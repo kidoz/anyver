@@ -1,5 +1,20 @@
 # Changelog 
 
+## [2.2.1] - 2026-11-25
+
+Patch release on top of v2.2.0 with dependency refreshes and documentation
+corrections; no runtime behavior changes.
+
+### Packaging
+- Rust dependencies refreshed: `cc` 1.11.3, `clap`/`clap_builder` 4.6.10,
+  `walkdir` 2.5.1, and `zerocopy`/`zerocopy-derive` 0.8.65.
+- Python tooling floor raised to ruff 0.17.6; maturin 1.16.0, pytest 9.2.0,
+  and pytest-benchmark 5.3.1 remain current.
+
+### Fixed
+- The README `to_dict()` example now shows the `ecosystem` field, and the
+  automatic-detection rules describe the RubyGem prerelease rule exactly.
+
 ## [2.2.0] - 2026-11-25
 
 Security-interoperability and range results change. Most visibly,

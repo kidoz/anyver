@@ -504,11 +504,10 @@ Built in Rust for speed. Typical benchmarks (Apple M-series):
 
 `anyver` follows [Semantic Versioning](https://semver.org/).
 
-Version **2.2.0** makes OSV ecosystem resolution explicit, hardens PURL
-construction, completes npm, PEP 440, and wildcard range matching, and keeps
-numeric components wider than `u64` exact. `Version` hashes are now randomized
-per process, and Alpine sort keys change. See the [2.2.0 migration
-notes](CHANGELOG.md#220---2026-11-25) before upgrading from 2.1.0.
+Version **2.2.1** is a maintenance patch: Rust and Python development
+dependencies are refreshed, and the `to_dict()` example and Ruby detection
+rule in this README are corrected. There are no API or behavior changes; see
+the [2.2.1 changelog](CHANGELOG.md#221---2026-11-25).
 
 The public API surface covered by SemVer guarantees:
 
