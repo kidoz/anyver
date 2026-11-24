@@ -11,7 +11,7 @@ use crate::strategies::{ParsedRepr, parse_for_ecosystem};
 use super::pyversion::PyVersion;
 
 pub(crate) fn eco_from_str(input: &str) -> PyResult<Ecosystem> {
-    Ecosystem::from_str(input).map_err(PyValueError::new_err)
+    Ecosystem::from_str(input).map_err(value_error)
 }
 
 pub(crate) trait SegToPy {
@@ -25,6 +25,19 @@ impl SegToPy for Seg {
             Seg::Text(s) => s.as_str().into_pyobject(py).unwrap().into_any(),
         }
     }
+}
+
+/// `ValueError` carrying a parser message. Messages quote the offending input,
+/// so they are capped: a megabyte-sized version must not turn into a
+/// megabyte-sized exception string.
+pub(crate) fn value_error(message: impl Into<String>) -> PyErr {
+    const LIMIT: usize = 400;
+    let message = message.into();
+    let Some(cut) = message.char_indices().map(|(index, _)| index).nth(LIMIT) else {
+        return PyValueError::new_err(message);
+    };
+    let total = message.chars().count();
+    PyValueError::new_err(format!("{}… ({total} characters in total)", &message[..cut]))
 }
 
 pub(crate) fn resolve_eco(
@@ -73,10 +86,10 @@ pub(crate) fn extract_parsed_for_ecosystem(
     if let Ok(v) = obj.extract::<PyRef<PyVersion>>() {
         match ecosystem {
             Ecosystem::Generic => Ok(ParsedRepr::Generic(v.inner.clone())),
-            _ => parse_for_ecosystem(ecosystem, &v.inner.raw).map_err(PyValueError::new_err),
+            _ => parse_for_ecosystem(ecosystem, &v.inner.raw).map_err(value_error),
         }
     } else if let Ok(s) = obj.extract::<String>() {
-        parse_for_ecosystem(ecosystem, &s).map_err(PyValueError::new_err)
+        parse_for_ecosystem(ecosystem, &s).map_err(value_error)
     } else {
         Err(PyTypeError::new_err("expected Version or str"))
     }

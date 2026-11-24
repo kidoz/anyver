@@ -4,14 +4,15 @@
 //! [`compare_str_with_ecosystem`] is the shared string-comparison primitive
 //! reused by the constraint solver and the crate's unit tests.
 
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use std::cmp::Ordering;
 
 use crate::parser::{Ecosystem, autodetect_ecosystem};
 use crate::strategies::{ParsedRepr, compare_for_ecosystem, parse_for_ecosystem};
 
-use super::conv::{eco_from_str, extract_parsed_for_ecosystem, resolve_eco, resolve_eco_for_obj};
+use super::conv::{
+    eco_from_str, extract_parsed_for_ecosystem, resolve_eco, resolve_eco_for_obj, value_error,
+};
 use super::pyversion::PyVersion;
 
 pub(crate) fn compare_str_with_ecosystem(a: &str, b: &str, ecosystem: &str) -> PyResult<Ordering> {
@@ -20,15 +21,15 @@ pub(crate) fn compare_str_with_ecosystem(a: &str, b: &str, ecosystem: &str) -> P
     } else {
         eco_from_str(ecosystem)?
     };
-    let left = parse_for_ecosystem(eco, a).map_err(PyValueError::new_err)?;
-    let right = parse_for_ecosystem(eco, b).map_err(PyValueError::new_err)?;
+    let left = parse_for_ecosystem(eco, a).map_err(value_error)?;
+    let right = parse_for_ecosystem(eco, b).map_err(value_error)?;
     Ok(compare_for_ecosystem(eco, &left, &right))
 }
 
 #[pyfunction]
 pub(crate) fn compare_semver_strict(a: &str, b: &str) -> PyResult<i32> {
-    let pa = parse_for_ecosystem(Ecosystem::Semver, a).map_err(PyValueError::new_err)?;
-    let pb = parse_for_ecosystem(Ecosystem::Semver, b).map_err(PyValueError::new_err)?;
+    let pa = parse_for_ecosystem(Ecosystem::Semver, a).map_err(value_error)?;
+    let pb = parse_for_ecosystem(Ecosystem::Semver, b).map_err(value_error)?;
     Ok(match compare_for_ecosystem(Ecosystem::Semver, &pa, &pb) {
         Ordering::Less => -1,
         Ordering::Equal => 0,
@@ -163,7 +164,7 @@ pub(crate) fn max_version<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let versions = versions.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     if versions.is_empty() {
-        return Err(PyValueError::new_err("empty sequence"));
+        return Err(value_error("empty sequence"));
     }
     let eco = resolve_eco(ecosystem, versions.first())?;
     let parsed: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions
@@ -186,7 +187,7 @@ pub(crate) fn min_version<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let versions = versions.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     if versions.is_empty() {
-        return Err(PyValueError::new_err("empty sequence"));
+        return Err(value_error("empty sequence"));
     }
     let eco = resolve_eco(ecosystem, versions.first())?;
     let parsed: Vec<(ParsedRepr, Bound<'py, PyAny>)> = versions

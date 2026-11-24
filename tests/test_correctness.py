@@ -581,6 +581,18 @@ def test_build_vers_uses_the_purl_type_for_alpine():
     assert anyver.vers_contains("vers:alpine/>=1.0.0-r1", "1.2.3-r1")
 
 
+def test_error_messages_do_not_echo_huge_inputs():
+    calls = [
+        lambda: Version("1a" * 200_000, ecosystem="ruby"),
+        lambda: Version("9" * 200_000, ecosystem="pep440"),
+        lambda: anyver.satisfies("1.5.0", ",".join([">=1.0"] * 50_000) + ",>>1.0"),
+    ]
+    for call in calls:
+        with pytest.raises(ValueError) as error:
+            call()
+        assert len(str(error.value)) < 450
+
+
 @pytest.mark.parametrize(
     "eco,value,post",
     [

@@ -1,14 +1,13 @@
 //! Stability-aware selectors: filtering out pre-releases (`stable_versions`)
 //! and picking the newest stable release (`latest_stable`).
 
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::parser::Ecosystem;
 use crate::strategies::ParsedRepr;
 
 use super::compare::collection_max;
-use super::conv::{extract_raw, resolve_eco};
+use super::conv::{extract_raw, resolve_eco, value_error};
 use super::pyversion::PyVersion;
 
 fn stable_candidate(obj: &Bound<'_, PyAny>, eco: Ecosystem) -> PyResult<Option<ParsedRepr>> {
@@ -45,7 +44,7 @@ pub(crate) fn latest_stable<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     let versions = versions.try_iter()?.collect::<PyResult<Vec<_>>>()?;
     if versions.is_empty() {
-        return Err(PyValueError::new_err("empty sequence"));
+        return Err(value_error("empty sequence"));
     }
     let eco = resolve_eco(ecosystem, versions.first())?;
     let mut stable = Vec::new();
@@ -56,5 +55,5 @@ pub(crate) fn latest_stable<'py>(
     }
     collection_max(eco, stable)
         .map(|(_, obj)| obj)
-        .ok_or_else(|| PyValueError::new_err("no stable versions found"))
+        .ok_or_else(|| value_error("no stable versions found"))
 }

@@ -3,7 +3,7 @@
 //! round-tripping, and the `sort_key` encoding.
 
 use pyo3::basic::CompareOp;
-use pyo3::exceptions::{PyIndexError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyIndexError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 use std::cmp::Ordering;
@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 use crate::parser::{Ecosystem, ParsedVersion, Seg, autodetect_ecosystem, parse};
 use crate::strategies::{ParsedRepr, compare_for_ecosystem, generic_sort_key, parse_for_ecosystem};
 
-use super::conv::{SegToPy, eco_from_str, extract_parsed_for_ecosystem};
+use super::conv::{SegToPy, eco_from_str, extract_parsed_for_ecosystem, value_error};
 
 /// Tuple encoding shared by the portable sort key and Python hashing.
 fn version_key(version: &PyVersion) -> Vec<(i32, u64, String)> {
@@ -55,7 +55,7 @@ impl PyVersion {
             }
         } else {
             let eco = eco_from_str(ecosystem)?;
-            let repr = parse_for_ecosystem(eco, version).map_err(PyValueError::new_err)?;
+            let repr = parse_for_ecosystem(eco, version).map_err(value_error)?;
             (eco, repr)
         };
         let inner = repr.version_view(version);
@@ -85,7 +85,7 @@ impl PyVersion {
         } else if equality {
             return Ok(py.NotImplemented().into_bound(py));
         } else if let Ok(s) = other.extract::<String>() {
-            let parsed = parse_for_ecosystem(self.eco, &s).map_err(PyValueError::new_err)?;
+            let parsed = parse_for_ecosystem(self.eco, &s).map_err(value_error)?;
             compare_for_ecosystem(self.eco, &self.repr, &parsed)
         } else {
             return Ok(py.NotImplemented().into_bound(py));
@@ -244,7 +244,7 @@ impl PyVersion {
         let left = if eco == self.eco {
             self.repr.clone()
         } else {
-            parse_for_ecosystem(eco, &self.inner.raw).map_err(PyValueError::new_err)?
+            parse_for_ecosystem(eco, &self.inner.raw).map_err(value_error)?
         };
         let right = extract_parsed_for_ecosystem(other, eco)?;
         Ok(match compare_for_ecosystem(eco, &left, &right) {
@@ -273,7 +273,7 @@ impl PyVersion {
     fn from_dict(_cls: &Bound<'_, PyType>, data: &Bound<'_, PyDict>) -> PyResult<Self> {
         let raw: String = match data.get_item("raw")? {
             Some(v) => v.extract()?,
-            None => return Err(PyValueError::new_err("missing 'raw' key")),
+            None => return Err(value_error("missing 'raw' key")),
         };
         let eco: String = match data.get_item("ecosystem")? {
             Some(v) => v.extract()?,
