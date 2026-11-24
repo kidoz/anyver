@@ -503,11 +503,11 @@ Built in Rust for speed. Typical benchmarks (Apple M-series):
 
 `anyver` follows [Semantic Versioning](https://semver.org/).
 
-Version **2.1.0** adds Hackage/Cabal and Java 9+ JDK runtime modes and
-dedicated ordering for NuGet, RubyGems, Alpine, Arch, CPAN, and Homebrew.
-Debian, Docker, and CRAN now reject malformed inputs, and stored sort keys for
-the corrected modes must be regenerated. See the [2.1.0 migration
-notes](CHANGELOG.md#210---2026-11-18) before upgrading from 2.0.0.
+Version **2.2.0** makes OSV ecosystem resolution explicit, hardens PURL
+construction, completes npm, PEP 440, and wildcard range matching, and keeps
+numeric components wider than `u64` exact. `Version` hashes are now randomized
+per process, and Alpine sort keys change. See the [2.2.0 migration
+notes](CHANGELOG.md#220---2026-11-25) before upgrading from 2.1.0.
 
 The public API surface covered by SemVer guarantees:
 

@@ -1,6 +1,6 @@
 # Changelog 
 
-## [Unreleased]
+## [2.2.0] - 2026-11-25
 
 Security-interoperability and range results change. Most visibly,
 `osv_affected()` raises `ValueError` for an ecosystem it does not recognise
