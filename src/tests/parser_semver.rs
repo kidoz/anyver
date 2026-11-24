@@ -201,16 +201,26 @@ fn test_unknown_text_lt_known_post() {
 // --- Numeric overflow (Fix #1) ---
 
 #[test]
-fn test_overflow_saturates() {
-    // A number that overflows u64 should saturate at u64::MAX, not become 0
+fn test_overflow_keeps_exact_digits() {
+    // A number that overflows u64 is kept as its digits instead of wrapping
+    // around to 0 or saturating into the same value as its neighbours.
     let v = parse("99999999999999999999999999999999");
-    assert_eq!(v.segments, vec![Seg::Num(u64::MAX)]);
+    assert_eq!(v.segments, vec![Seg::Wide("99999999999999999999999999999999".into())]);
+    assert_eq!(
+        parse("00018446744073709551616").segments,
+        vec![Seg::Wide("18446744073709551616".into())]
+    );
+    assert_eq!(parse("000").segments, vec![Seg::Num(0)]);
 }
 
 #[test]
 fn test_overflow_greater_than_normal() {
-    // Saturated version should be greater than any normal version
+    // A wide number is greater than any component that fits in u64.
     assert_eq!(cmpg("99999999999999999999999999999999", "999"), Greater);
+    assert_eq!(cmpg("18446744073709551616", "18446744073709551615"), Greater);
+    assert_eq!(cmpg("1.18446744073709551615", "1.18446744073709551616"), Less);
+    assert_eq!(cmpg("18446744073709551616", "018446744073709551616"), Equal);
+    assert_eq!(cmpg("1.0.18446744073709551616", "1.0"), Greater);
 }
 
 // --- Strict SemVer validation (Fix #2) ---

@@ -15,16 +15,22 @@ pub(crate) fn eco_from_str(input: &str) -> PyResult<Ecosystem> {
 }
 
 pub(crate) trait SegToPy {
-    fn to_py<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny>;
+    fn to_py<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
 }
 
 impl SegToPy for Seg {
-    fn to_py<'py>(&self, py: Python<'py>) -> Bound<'py, PyAny> {
+    fn to_py<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         match self {
-            Seg::Num(n) => (*n).into_pyobject(py).unwrap().into_any(),
-            Seg::Text(s) => s.as_str().into_pyobject(py).unwrap().into_any(),
+            Seg::Num(n) => (*n).into_pyobject(py).map(Bound::into_any).map_err(Into::into),
+            Seg::Wide(digits) => wide_int(py, digits),
+            Seg::Text(s) => s.as_str().into_pyobject(py).map(Bound::into_any).map_err(Into::into),
         }
     }
+}
+
+/// A Python `int` for a digit run wider than `u64`.
+fn wide_int<'py>(py: Python<'py>, digits: &str) -> PyResult<Bound<'py, PyAny>> {
+    py.import("builtins")?.getattr("int")?.call1((digits,))
 }
 
 /// `ValueError` carrying a parser message. Messages quote the offending input,

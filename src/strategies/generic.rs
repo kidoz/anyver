@@ -54,9 +54,15 @@ pub(crate) fn canonical_segments(segs: &[Seg]) -> Cow<'_, [Seg]> {
     Cow::Owned(out)
 }
 
+/// Canonical digit strings compare by length, then lexically.
+fn cmp_wide(a: &str, b: &str) -> Ordering {
+    a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+}
+
 pub(crate) fn cmp_two(a: &Seg, b: &Seg) -> Ordering {
     match (a, b) {
         (Seg::Num(x), Seg::Num(y)) => x.cmp(y),
+        (Seg::Wide(x), Seg::Wide(y)) => cmp_wide(x, y),
         (Seg::Text(x), Seg::Text(y)) => {
             let wx = tag_weight(x);
             let wy = tag_weight(y);
@@ -67,8 +73,12 @@ pub(crate) fn cmp_two(a: &Seg, b: &Seg) -> Ordering {
                 (None, None) => x.cmp(y),
             }
         }
-        (Seg::Num(_), Seg::Text(_)) => Ordering::Greater,
-        (Seg::Text(_), Seg::Num(_)) => Ordering::Less,
+        // A wide number never fits in u64, so it outranks every `Num`. Both
+        // kinds of number outrank text.
+        (Seg::Num(_) | Seg::Wide(_), Seg::Text(_)) | (Seg::Wide(_), Seg::Num(_)) => {
+            Ordering::Greater
+        }
+        (Seg::Text(_), Seg::Num(_) | Seg::Wide(_)) | (Seg::Num(_), Seg::Wide(_)) => Ordering::Less,
     }
 }
 
@@ -86,6 +96,9 @@ pub(crate) fn cmp_segments(left: &[Seg], right: &[Seg]) -> Ordering {
     for i in 0..n {
         match (nl.get(i), nr.get(i)) {
             (None, None) => return Ordering::Equal,
+            // A wide number is never zero, so it is a real trailing component.
+            (None, Some(Seg::Wide(_))) => return Ordering::Less,
+            (Some(Seg::Wide(_)), None) => return Ordering::Greater,
             (None, Some(Seg::Num(v))) => {
                 if *v == 0 {
                     continue;
@@ -129,6 +142,8 @@ pub(crate) fn generic_sort_key(version: &ParsedVersion) -> SortKey {
     let mut key = vec![(2, version.epoch, String::new())];
     key.extend(canonical_segments(&version.segments).iter().map(|segment| match segment {
         Seg::Num(number) => (100, *number, String::new()),
+        // Rank 101 keeps a wide number above every u64 component.
+        Seg::Wide(digits) => (101, digits.len() as u64, digits.clone()),
         Seg::Text(text) => match tag_weight(text) {
             Some(weight) => (weight, 0, String::new()),
             None => (29, 0, text.clone()),

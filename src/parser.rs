@@ -1,6 +1,9 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Seg {
     Num(u64),
+    /// A digit run wider than `u64`, kept as canonical digits so that two
+    /// such components compare exactly instead of both saturating.
+    Wide(String),
     Text(String),
 }
 
@@ -338,8 +341,13 @@ pub(crate) fn parse_generic(input: &str) -> ParsedVersion {
             while i < len && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            let n: u64 = lower[start..i].parse().unwrap_or(u64::MAX);
-            segs.push(Seg::Num(n));
+            let digits = lower[start..i].trim_start_matches('0');
+            segs.push(match digits.parse::<u64>() {
+                Ok(n) => Seg::Num(n),
+                // A zero run leaves no digits; anything else is wider than u64.
+                Err(_) if digits.is_empty() => Seg::Num(0),
+                Err(_) => Seg::Wide(digits.to_string()),
+            });
             continue;
         }
         if ch.is_ascii_alphabetic() {

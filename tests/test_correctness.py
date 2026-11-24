@@ -581,6 +581,41 @@ def test_build_vers_uses_the_purl_type_for_alpine():
     assert anyver.vers_contains("vers:alpine/>=1.0.0-r1", "1.2.3-r1")
 
 
+@pytest.mark.parametrize("ecosystem", ["generic", "composer", "conda", "homebrew", "alpine"])
+def test_wide_components_stay_distinct(ecosystem):
+    wide = 2**64
+    for left, right, expected in [
+        (f"1.{wide}", "1.0", 1),
+        (f"1.{wide + 5}", "1.5", 1),
+        (f"1.{wide + 1}", f"1.{wide}", 1),
+        (f"1.{wide}", f"1.{wide}", 0),
+    ]:
+        pair = (ecosystem, left, right)
+        assert anyver.compare(left, right, ecosystem=ecosystem) == expected, pair
+        assert anyver.compare(right, left, ecosystem=ecosystem) == -expected, pair
+
+
+def test_wide_components_are_exposed_exactly():
+    wide = 2**64 + 5
+    v = Version(f"1.{wide}.3", ecosystem="generic")
+    assert v.segments() == (1, wide, 3)
+    assert v[1] == wide
+    assert v.minor == wide
+    assert v.release() == (1, wide, 3)
+    assert v.to_dict()["minor"] == wide
+    assert v.sort_key() == Version(f"1.{wide}.3", ecosystem="generic").sort_key()
+
+
+def test_bump_rejects_wide_components():
+    version = f"1.{2**64}.0"
+    with pytest.raises(ValueError, match="exceeds u64"):
+        anyver.bump_minor(version)
+    with pytest.raises(ValueError, match="exceeds u64"):
+        anyver.next_stable(version)
+    # Only the components a bump prints or increments have to fit.
+    assert anyver.bump_major(version) == "2.0.0"
+
+
 def test_error_messages_do_not_echo_huge_inputs():
     calls = [
         lambda: Version("1a" * 200_000, ecosystem="ruby"),

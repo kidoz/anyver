@@ -16,8 +16,12 @@ fn take<'a>(rest: &mut &'a str, predicate: impl FnMut(&u8) -> bool) -> &'a str {
     token
 }
 
-fn number(digits: &str) -> u64 {
-    digits.bytes().fold(0u64, |n, digit| n.wrapping_mul(10).wrapping_add(u64::from(digit - b'0')))
+/// A digit run as a sort token: canonical digits ordered by length, then
+/// lexically. apk compares numeric tokens this way, so a component wider than
+/// `u64` keeps its exact position instead of wrapping around.
+fn number(digits: &str) -> (u64, String) {
+    let digits = digits.trim_start_matches('0');
+    (digits.len() as u64, digits.to_string())
 }
 
 pub(super) fn parse_alpine(input: &str) -> Result<AlpineVersion, String> {
@@ -27,7 +31,8 @@ pub(super) fn parse_alpine(input: &str) -> Result<AlpineVersion, String> {
     if first.is_empty() {
         return Err(error());
     }
-    let mut key = vec![(7, number(first), String::new())];
+    let (len, value) = number(first);
+    let mut key = vec![(7, len, value)];
     while let Some(tail) = rest.strip_prefix('.') {
         rest = tail;
         let digits = take(&mut rest, u8::is_ascii_digit);
@@ -36,11 +41,13 @@ pub(super) fn parse_alpine(input: &str) -> Result<AlpineVersion, String> {
         }
         // apk compares dot components lexically if either starts with zero.
         // Such components always sort below one starting with 1–9.
-        key.push(if digits.starts_with('0') {
+        let token = if digits.starts_with('0') {
             (6, 0, digits.to_string())
         } else {
-            (7, number(digits), String::new())
-        });
+            let (len, value) = number(digits);
+            (7, len, value)
+        };
+        key.push(token);
     }
     if let Some(&letter) = rest.as_bytes().first().filter(|b| b.is_ascii_lowercase()) {
         key.push((5, u64::from(letter), String::new()));
@@ -68,7 +75,8 @@ pub(super) fn parse_alpine(input: &str) -> Result<AlpineVersion, String> {
         key.push((rank, suffix, String::new()));
         let digits = take(&mut rest, u8::is_ascii_digit);
         if !digits.is_empty() {
-            key.push((3, number(digits), String::new()));
+            let (len, value) = number(digits);
+            key.push((3, len, value));
         }
     }
     if let Some(tail) = rest.strip_prefix('~') {
@@ -87,7 +95,8 @@ pub(super) fn parse_alpine(input: &str) -> Result<AlpineVersion, String> {
             return Err(error());
         }
         is_postrelease = true;
-        key.push((1, number(digits), String::new()));
+        let (len, value) = number(digits);
+        key.push((1, len, value));
     }
     if !rest.is_empty() {
         return Err(error());

@@ -122,7 +122,7 @@ impl PyVersion {
                 "segment index {idx} out of range (version has {len} segments)"
             )));
         }
-        Ok(self.inner.segments[real_idx as usize].to_py(py))
+        self.inner.segments[real_idx as usize].to_py(py)
     }
 
     fn __bool__(&self) -> bool {
@@ -188,33 +188,32 @@ impl PyVersion {
         self.inner.segments.len()
     }
 
-    #[getter]
-    fn major(&self) -> u64 {
-        match self.inner.segments.first() {
-            Some(Seg::Num(n)) => *n,
-            _ => 0,
+    /// The numeric segment at `index` as a Python `int`; missing or text → 0.
+    fn number_at<'py>(&self, py: Python<'py>, index: usize) -> PyResult<Bound<'py, PyAny>> {
+        match self.inner.segments.get(index) {
+            Some(value @ (Seg::Num(_) | Seg::Wide(_))) => value.to_py(py),
+            _ => 0u64.into_pyobject(py).map(Bound::into_any).map_err(Into::into),
         }
     }
 
     #[getter]
-    fn minor(&self) -> u64 {
-        match self.inner.segments.get(1) {
-            Some(Seg::Num(n)) => *n,
-            _ => 0,
-        }
+    fn major<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.number_at(py, 0)
     }
 
     #[getter]
-    fn patch(&self) -> u64 {
-        match self.inner.segments.get(2) {
-            Some(Seg::Num(n)) => *n,
-            _ => 0,
-        }
+    fn minor<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.number_at(py, 1)
+    }
+
+    #[getter]
+    fn patch<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.number_at(py, 2)
     }
 
     fn segments<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         let items: Vec<Bound<'py, PyAny>> =
-            self.inner.segments.iter().map(|s| s.to_py(py)).collect();
+            self.inner.segments.iter().map(|s| s.to_py(py)).collect::<PyResult<Vec<_>>>()?;
         PyTuple::new(py, items)
     }
 
@@ -228,9 +227,9 @@ impl PyVersion {
             .segments
             .iter()
             .take(release_len)
-            .take_while(|s| matches!(s, Seg::Num(_)))
+            .take_while(|s| matches!(s, Seg::Num(_) | Seg::Wide(_)))
             .map(|s| s.to_py(py))
-            .collect();
+            .collect::<PyResult<Vec<_>>>()?;
         PyTuple::new(py, nums)
     }
 
@@ -259,9 +258,9 @@ impl PyVersion {
         dict.set_item("raw", &self.inner.raw)?;
         dict.set_item("ecosystem", self.eco.as_str())?;
         dict.set_item("epoch", self.inner.epoch)?;
-        dict.set_item("major", self.major())?;
-        dict.set_item("minor", self.minor())?;
-        dict.set_item("patch", self.patch())?;
+        dict.set_item("major", self.major(py)?)?;
+        dict.set_item("minor", self.minor(py)?)?;
+        dict.set_item("patch", self.patch(py)?)?;
         dict.set_item("build", &self.inner.build)?;
         dict.set_item("is_prerelease", self.is_prerelease())?;
         dict.set_item("is_postrelease", self.is_postrelease())?;
