@@ -133,6 +133,12 @@ fn parse_comparator(token: &str) -> Result<Comparator, String> {
     if version.is_empty() {
         return Err(format!("missing version in comparator '{token}'"));
     }
+    // No version contains a comparison operator. One here is a mistyped
+    // operator (`>>1.0`, `>=1.0 <<2.0`) that a permissive ecosystem would
+    // otherwise read as text and answer with a confident boolean.
+    if version.contains(['<', '>', '=']) {
+        return Err(format!("invalid comparator version: '{token}'"));
+    }
     Ok(Comparator { op, version: version.to_string() })
 }
 

@@ -709,6 +709,13 @@ def test_bare_versions_still_need_an_operator_outside_npm():
         anyver.satisfies("1.5.0", "1.2.3 - 2.3.4", ecosystem="semver")
 
 
+@pytest.mark.parametrize("spec", [">>1.0", "<<2.0", ">=1.0 <<2.0", "<=<2.0", "==1.0=2"])
+def test_mistyped_operators_are_rejected(spec):
+    for ecosystem in ["generic", "npm", "pep440"]:
+        with pytest.raises(ValueError, match="invalid comparator"):
+            anyver.satisfies("1.5.0", spec, ecosystem=ecosystem)
+
+
 @pytest.mark.parametrize("ecosystem", ["generic", "composer", "conda", "homebrew", "alpine"])
 def test_wide_components_stay_distinct(ecosystem):
     wide = 2**64

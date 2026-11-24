@@ -291,3 +291,17 @@ fn test_wildcards_accept_a_v_prefix() {
     assert!(contains_in(Ecosystem::Go, "v1.2.x", "v1.2.5"));
     assert!(contains_in(Ecosystem::Pep440, "==v1.2.*", "1.2.9"));
 }
+
+// ====================================================================
+// Mistyped operators must not become text
+// ====================================================================
+
+#[test]
+fn test_operator_inside_a_comparator_version_is_an_error() {
+    for input in [">>1.0", "<<2.0", ">=1.0 <<2.0", "<=<2.0", "==1.0=2"] {
+        assert!(
+            RangeSet::parse(input, Ecosystem::Generic).is_err(),
+            "{input:?} must not be read as a version"
+        );
+    }
+}
