@@ -581,6 +581,134 @@ def test_build_vers_uses_the_purl_type_for_alpine():
     assert anyver.vers_contains("vers:alpine/>=1.0.0-r1", "1.2.3-r1")
 
 
+@pytest.mark.parametrize(
+    "spec,version,expected",
+    [
+        ("==1.2.3.*", "1.2.3", True),
+        ("==1.2.3.*", "1.2.3.9", True),
+        ("==1.2.3.*", "1.2.4", False),
+        ("==1.2.3.*", "1.2", False),
+        ("1.2.3.4.x", "1.2.3.4.7", True),
+        ("1.2.3.4.x", "1.2.3.5", False),
+        (">=1.2.3.4.x", "1.2.3.4", True),
+        ("<=1.2.3.4.x", "1.2.3.5", False),
+    ],
+)
+def test_wildcards_beyond_the_release_triple(spec, version, expected):
+    assert anyver.satisfies(version, spec) is expected
+
+
+@pytest.mark.parametrize(
+    "ecosystem,spec,version,expected",
+    [
+        ("pep440", "==1!1.2.*", "1!1.2.9", True),
+        ("pep440", "==1!1.2.*", "1.3.0", False),
+        ("rpm", "1:2.x", "1:2.5-1", True),
+        ("rpm", "1:2.x", "2.5-1", False),
+        ("nuget", "1.2.3.x", "1.2.3.4", True),
+        ("nuget", "1.2.3.x", "1.2.4", False),
+        ("nuget", ">1.2.3.x", "1.2.4", True),
+    ],
+)
+def test_wildcards_keep_the_epoch_and_the_fourth_component(ecosystem, spec, version, expected):
+    assert anyver.satisfies(version, spec, ecosystem=ecosystem) is expected
+
+
+@pytest.mark.parametrize(
+    "version,expected",
+    [
+        ("1.2.0a1", True),
+        ("1.2.0rc1", True),
+        ("1.2.0.dev1", True),
+        ("1.2", True),
+        ("1.2.9", True),
+        ("1.2.0.post1", True),
+        ("1.1.9", False),
+        ("1.1.post1", False),
+        ("1.3.dev0", False),
+        ("1.3.0a1", False),
+    ],
+)
+def test_pep440_prefix_match_covers_boundary_prereleases(version, expected):
+    # PEP 440 prefix matching includes the pre- and development releases of
+    # the release the prefix names.
+    assert anyver.satisfies(version, "==1.2.*", ecosystem="pep440") is expected
+
+
+def test_pep440_prefix_match_ignores_prereleases_only_above_the_prefix():
+    assert anyver.satisfies("1.2.0rc1", "==1.2.0.*", ecosystem="pep440")
+    assert not anyver.satisfies("1.2.1.dev0", "==1.2.0.*", ecosystem="pep440")
+    assert anyver.satisfies("1!1.2.0a1", "==1!1.2.*", ecosystem="pep440")
+    assert not anyver.satisfies("1.2.0", "==1!1.2.*", ecosystem="pep440")
+
+
+@pytest.mark.parametrize(
+    "spec,version,expected",
+    [
+        ("1.2.3", "1.2.3", True),
+        ("1.2.3", "1.2.4", False),
+        ("=1.2.3", "1.2.3", True),
+        ("=v1.2.3", "1.2.3", True),
+        ("=1.2.x", "1.2.9", True),
+        ("1.2.3 || >=2.0.0", "2.5.0", True),
+        ("1.2.3 - 2.3.4", "1.2.3", True),
+        ("1.2.3 - 2.3.4", "2.3.4", True),
+        ("1.2.3 - 2.3.4", "2.3.5", False),
+        ("1.2.3 - 2.3.4", "1.2.2", False),
+        ("1.2.3 - 2.3", "2.3.9", True),
+        ("1.2.3 - 2.3", "2.4.0", False),
+        ("1.2.3 - 2", "3.0.0", False),
+        ("1.2.3-pre - 2.3.4", "1.2.3-pre", True),
+        # A partial lower bound is padded to the release; a `v` prefix is fine.
+        ("1.2 - 2.3.4", "1.2.0", True),
+        ("1.2 - 2.3.4", "1.1.9", False),
+        ("v1.2 - 2.3.4", "1.5.0", True),
+        ("1 - 2.3.4", "1.0.0", True),
+        ("1.2.3 - v2.3", "2.3.9", True),
+        ("1.2.3 - v2.3", "2.4.0", False),
+    ],
+)
+def test_npm_bare_exact_and_hyphen_ranges(spec, version, expected):
+    assert anyver.satisfies(version, spec, ecosystem="npm") is expected
+
+
+@pytest.mark.parametrize("spec", ["1.2", "v1.2", "=1.2", "=V1.2"])
+def test_npm_bare_partial_versions_are_x_ranges(spec):
+    """node-semver reads a bare partial version as an x-range, not as an exact
+    version that then fails strict parsing."""
+    assert anyver.satisfies("1.2.0", spec, ecosystem="npm")
+    assert anyver.satisfies("1.2.9", spec, ecosystem="npm")
+    assert not anyver.satisfies("1.3.0", spec, ecosystem="npm")
+    assert not anyver.satisfies("1.1.9", spec, ecosystem="npm")
+
+
+def test_npm_single_component_bare_version_is_an_x_range():
+    assert anyver.satisfies("1.9.9", "1", ecosystem="npm")
+    assert not anyver.satisfies("2.0.0", "1", ecosystem="npm")
+    assert not anyver.satisfies("0.9.9", "1", ecosystem="npm")
+
+
+@pytest.mark.parametrize(
+    "ecosystem,spec,version,expected",
+    [
+        ("npm", "v1.2.x", "1.2.5", True),
+        ("npm", ">=v1.2.x", "1.2.5", True),
+        ("npm", ">=v1.2.x", "1.1.9", False),
+        ("go", "v1.2.x", "v1.2.5", True),
+        ("pep440", "==v1.2.*", "1.2.9", True),
+    ],
+)
+def test_wildcards_accept_a_v_prefix(ecosystem, spec, version, expected):
+    assert anyver.satisfies(version, spec, ecosystem=ecosystem) is expected
+
+
+def test_bare_versions_still_need_an_operator_outside_npm():
+    with pytest.raises(ValueError):
+        anyver.satisfies("1.2.3", "1.2.3", ecosystem="generic")
+    with pytest.raises(ValueError):
+        anyver.satisfies("1.5.0", "1.2.3 - 2.3.4", ecosystem="semver")
+
+
 @pytest.mark.parametrize("ecosystem", ["generic", "composer", "conda", "homebrew", "alpine"])
 def test_wide_components_stay_distinct(ecosystem):
     wide = 2**64

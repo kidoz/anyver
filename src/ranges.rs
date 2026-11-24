@@ -3,7 +3,7 @@
 //! This module keeps range semantics in pure Rust. The Python layer only
 //! translates arguments and errors.
 
-use crate::parser::Ecosystem;
+use crate::parser::{Ecosystem, strip_v};
 use crate::strategies::{
     SemVer, cmp_semver_strict, compare_for_ecosystem, compatible_upper_bound, parse_for_ecosystem,
     parse_semver_strict,
@@ -136,9 +136,90 @@ fn parse_comparator(token: &str) -> Result<Comparator, String> {
     Ok(Comparator { op, version: version.to_string() })
 }
 
+fn is_wildcard(part: &str) -> bool {
+    matches!(part, "x" | "X" | "*")
+}
+
+/// A wildcard anywhere in the release part, at any depth: `1.2.x`, `1.2.3.4.*`.
 fn has_wildcard(token: &str) -> bool {
     let core = token.split(['-', '+']).next().unwrap_or_default();
-    core.split('.').take(3).any(|part| matches!(part, "x" | "X" | "*"))
+    core.split('.').any(is_wildcard)
+}
+
+/// Split a leading `N!` (PEP 440) or `N:` (Debian, RPM) epoch off a range bound.
+fn split_epoch(rest: &str) -> (&str, &str) {
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    match rest.as_bytes().get(digits) {
+        Some(b'!' | b':') if digits > 0 => (&rest[..=digits], &rest[digits + 1..]),
+        _ => ("", rest),
+    }
+}
+
+/// Split an epoch and an optional `v` off a wildcarded version. The first
+/// element is the prefix to put back on the bounds, so that `v1.2.x` yields
+/// `v1.2.0` and `1!1.2.*` yields `1!1.2.0`.
+fn split_wildcard_prefix(rest: &str) -> (&str, &str) {
+    let rest = rest.trim();
+    let (epoch, after_epoch) = split_epoch(rest);
+    let core = strip_v(after_epoch);
+    let prefix_len = epoch.len() + (after_epoch.len() - core.len());
+    (&rest[..prefix_len], core)
+}
+
+/// The numeric components before a wildcard and the wildcard's position:
+/// `1.2.x` → `([1, 2], 2)`, `1.2.3.4.x` → `([1, 2, 3, 4], 4)`.
+fn parse_wildcard(core: &str) -> Option<(Vec<u64>, usize)> {
+    let core = core.split(['-', '+']).next()?;
+    let mut parts = Vec::new();
+    for (depth, raw) in core.split('.').enumerate() {
+        if is_wildcard(raw) {
+            return Some((parts, depth));
+        }
+        parts.push(raw.parse().ok()?);
+    }
+    None
+}
+
+/// How many release components a bare numeric version (`1.2`: digits and dots
+/// only) has, when it has fewer than the three of a complete release.
+fn partial_release_count(bare: &str) -> Option<usize> {
+    if !bare.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return None;
+    }
+    let count = parse_num_prefix(bare)?.0.len();
+    (count < 3).then_some(count)
+}
+
+/// The edges of the window a wildcard names: `1.2.x` → `>=1.2.0,<1.3.0` and,
+/// once the release triple is complete, `1.2.3.x` → `>=1.2.3,<1.2.4`.
+fn wildcard_window(parts: &[u64], depth: usize) -> Result<(String, String), String> {
+    let mut upper = parts.to_vec();
+    let last = upper.last_mut().ok_or("missing version before wildcard")?;
+    *last = increment(*last)?;
+    let joined = |values: &[u64]| values.iter().map(u64::to_string).collect::<Vec<_>>().join(".");
+    if depth >= 3 {
+        return Ok((joined(parts), joined(&upper)));
+    }
+    // A partial release is padded to the triple: `1` → `1.0.0`, `2` → `2.0.0`.
+    let padded = |values: &[u64]| {
+        fmt_triple(values.first().copied().unwrap_or(0), values.get(1).copied().unwrap_or(0), 0)
+    };
+    Ok((padded(parts), padded(&upper)))
+}
+
+/// PEP 440 prefix matching: `==1.2.*` admits every release whose public
+/// version starts with `1.2`, including the pre- and development releases of
+/// `1.2` itself. The window therefore opens at `1.2.dev0`, not at `1.2`.
+fn pep440_prefix_window(prefix: &str, parts: &[u64]) -> Result<Vec<Comparator>, String> {
+    let mut upper = parts.to_vec();
+    let last = upper.last_mut().ok_or("missing version before wildcard")?;
+    *last = increment(*last)?;
+    let lower = parts.iter().map(u64::to_string).collect::<Vec<_>>().join(".");
+    let upper = upper.iter().map(u64::to_string).collect::<Vec<_>>().join(".");
+    Ok(vec![
+        Comparator { op: RangeOp::Ge, version: format!("{prefix}{lower}.dev0") },
+        Comparator { op: RangeOp::Lt, version: format!("{prefix}{upper}.dev0") },
+    ])
 }
 
 /// Resolve an operator applied to a wildcarded version (`>=1.2.x`, `<=2.x`).
@@ -146,9 +227,14 @@ fn has_wildcard(token: &str) -> bool {
 /// exclusive operators is not the wildcard's own prefix: `>1.2.x` means "above
 /// everything in 1.2", i.e. `>=1.3.0`, and `<=1.2.x` means `<1.3.0`. This is
 /// npm's reading of the same syntax.
-fn expand_operator_wildcard(op: RangeOp, rest: &str) -> Result<Vec<Comparator>, String> {
+fn expand_operator_wildcard(
+    ecosystem: Ecosystem,
+    op: RangeOp,
+    rest: &str,
+) -> Result<Vec<Comparator>, String> {
+    let (prefix, core) = split_wildcard_prefix(rest);
     let (parts, depth) =
-        parse_num_prefix(rest).ok_or_else(|| format!("invalid wildcard range: '{rest}'"))?;
+        parse_wildcard(core).ok_or_else(|| format!("invalid wildcard range: '{rest}'"))?;
     if depth == 0 {
         return match op {
             RangeOp::Eq | RangeOp::Ge | RangeOp::Le => Ok(Vec::new()),
@@ -159,22 +245,16 @@ fn expand_operator_wildcard(op: RangeOp, rest: &str) -> Result<Vec<Comparator>, 
             RangeOp::Ne => Err(format!("'!=' does not support wildcard versions: '!={rest}'")),
         };
     }
-    let major = *parts.first().unwrap_or(&0);
-    let minor = *parts.get(1).unwrap_or(&0);
-    let lower = fmt_triple(major, minor, 0);
-    let upper = if depth == 1 {
-        fmt_triple(increment(major)?, 0, 0)
-    } else {
-        fmt_triple(major, increment(minor)?, 0)
-    };
+    if ecosystem == Ecosystem::Pep440 && op == RangeOp::Eq {
+        return pep440_prefix_window(prefix, &parts);
+    }
+    let (lower, upper) = wildcard_window(&parts, depth)?;
+    let comparator = |op, version: &str| Comparator { op, version: format!("{prefix}{version}") };
     Ok(match op {
-        RangeOp::Ge | RangeOp::Lt => vec![Comparator { op, version: lower }],
-        RangeOp::Gt => vec![Comparator { op: RangeOp::Ge, version: upper }],
-        RangeOp::Le => vec![Comparator { op: RangeOp::Lt, version: upper }],
-        RangeOp::Eq => vec![
-            Comparator { op: RangeOp::Ge, version: lower },
-            Comparator { op: RangeOp::Lt, version: upper },
-        ],
+        RangeOp::Ge | RangeOp::Lt => vec![comparator(op, &lower)],
+        RangeOp::Gt => vec![comparator(RangeOp::Ge, &upper)],
+        RangeOp::Le => vec![comparator(RangeOp::Lt, &upper)],
+        RangeOp::Eq => vec![comparator(RangeOp::Ge, &lower), comparator(RangeOp::Lt, &upper)],
         RangeOp::Ne => {
             return Err(format!("'!=' does not support wildcard versions: '!={rest}'"));
         }
@@ -217,24 +297,21 @@ fn expand_tilde(rest: &str) -> Result<Vec<Comparator>, String> {
     ])
 }
 
-fn expand_x_range(token: &str) -> Result<Vec<Comparator>, String> {
+fn expand_x_range(ecosystem: Ecosystem, token: &str) -> Result<Vec<Comparator>, String> {
+    let (prefix, core) = split_wildcard_prefix(token);
     let (parts, depth) =
-        parse_num_prefix(token).ok_or_else(|| format!("invalid x-range: '{token}'"))?;
+        parse_wildcard(core).ok_or_else(|| format!("invalid x-range: '{token}'"))?;
     if depth == 0 {
         // Leading wildcard (`x.1`) — nothing is constrained.
         return Ok(Vec::new());
     }
-    let major = *parts.first().unwrap_or(&0);
-    let minor = *parts.get(1).unwrap_or(&0);
-    let lower = fmt_triple(major, minor, 0);
-    let upper = if depth == 1 {
-        fmt_triple(increment(major)?, 0, 0)
-    } else {
-        fmt_triple(major, increment(minor)?, 0)
-    };
+    if ecosystem == Ecosystem::Pep440 {
+        return pep440_prefix_window(prefix, &parts);
+    }
+    let (lower, upper) = wildcard_window(&parts, depth)?;
     Ok(vec![
-        Comparator { op: RangeOp::Ge, version: lower },
-        Comparator { op: RangeOp::Lt, version: upper },
+        Comparator { op: RangeOp::Ge, version: format!("{prefix}{lower}") },
+        Comparator { op: RangeOp::Lt, version: format!("{prefix}{upper}") },
     ])
 }
 
@@ -278,9 +355,19 @@ fn expand_interval(token: &str) -> Result<Vec<Comparator>, String> {
 }
 
 fn expand_token(token: &str, ecosystem: Ecosystem) -> Result<Vec<Comparator>, String> {
-    let t = token.trim();
+    let mut t = token.trim();
     if t.is_empty() {
         return Ok(Vec::new());
+    }
+    // npm writes plain equality as `=1.2.3` and `=1.2.x`.
+    if ecosystem == Ecosystem::Npm
+        && let Some(rest) = t.strip_prefix('=')
+        && rest
+            .as_bytes()
+            .first()
+            .is_some_and(|b| b.is_ascii_digit() || matches!(b, b'v' | b'V' | b'x' | b'X' | b'*'))
+    {
+        t = rest;
     }
     if t == "*" || t == "x" || t == "X" {
         return Ok(Vec::new());
@@ -321,12 +408,72 @@ fn expand_token(token: &str, ecosystem: Ecosystem) -> Result<Vec<Comparator>, St
     if let Some((op, rest)) = split_operator(t)
         && has_wildcard(rest)
     {
-        return expand_operator_wildcard(op, rest);
+        return expand_operator_wildcard(ecosystem, op, rest);
     }
     if has_wildcard(t) {
-        return expand_x_range(t);
+        return expand_x_range(ecosystem, t);
+    }
+    // npm reads a bare complete version as an exact match (`1.2.3` is
+    // `==1.2.3`) and a bare partial one as an x-range (`1.2` is `1.2.x`).
+    if ecosystem == Ecosystem::Npm && !t.starts_with(['<', '>', '=', '!']) {
+        if let Some(count) = partial_release_count(strip_v(t)) {
+            let padded = format!("{}{}", strip_v(t), ".x".repeat(3 - count));
+            return expand_x_range(ecosystem, &padded);
+        }
+        return Ok(vec![Comparator { op: RangeOp::Eq, version: t.to_string() }]);
     }
     Ok(vec![parse_comparator(t)?])
+}
+
+/// npm hyphen ranges: `1.2.3 - 2.3.4` is `>=1.2.3 <=2.3.4`. A partial lower
+/// bound (`1.2`) is padded to the release (`>=1.2.0`), and a partial upper
+/// bound (`2.3`, `2`) stops short of the next release (`<2.4.0`, `<3.0.0`).
+fn npm_hyphen_ranges(tokens: Vec<String>) -> Vec<String> {
+    fn is_version(token: &str) -> bool {
+        token.as_bytes().first().is_some_and(|b| b.is_ascii_digit() || matches!(b, b'v' | b'V'))
+    }
+    fn without_equals(token: &str) -> &str {
+        token.strip_prefix('=').unwrap_or(token)
+    }
+    let mut out = Vec::with_capacity(tokens.len());
+    let mut i = 0usize;
+    while i < tokens.len() {
+        let upper = tokens.get(i + 2).filter(|_| tokens.get(i + 1).is_some_and(|t| t == "-"));
+        let Some(upper) = upper else {
+            out.push(tokens[i].clone());
+            i += 1;
+            continue;
+        };
+        let (lower, upper) = (without_equals(&tokens[i]), without_equals(upper));
+        if !is_version(lower) || !is_version(upper) {
+            out.push(tokens[i].clone());
+            i += 1;
+            continue;
+        }
+        let lower = match partial_release_count(strip_v(lower)) {
+            Some(count) => format!("{}{}", strip_v(lower), ".0".repeat(3 - count)),
+            None => lower.to_string(),
+        };
+        out.push(format!(">={lower}"));
+        out.push(match partial_upper_bound(upper) {
+            Some(bound) => format!("<{bound}"),
+            None => format!("<={upper}"),
+        });
+        i += 3;
+    }
+    out
+}
+
+/// The exclusive bound a partial npm hyphen-range limit names: `2.3` →
+/// `2.4.0`. `None` when the limit is complete (`2.3.4`) or a wildcard (`2.x`).
+fn partial_upper_bound(upper: &str) -> Option<String> {
+    let bare = strip_v(upper);
+    partial_release_count(bare)?;
+    let (mut parts, _) = parse_num_prefix(bare)?;
+    let last = parts.last_mut()?;
+    *last = last.checked_add(1)?;
+    parts.resize(3, 0);
+    Some(parts.iter().map(u64::to_string).collect::<Vec<_>>().join("."))
 }
 
 fn split_branch(branch: &str) -> Vec<String> {
@@ -383,6 +530,8 @@ impl RangeSet {
         let mut branches = Vec::new();
         for branch in input.split("||") {
             let tokens = split_branch(branch);
+            let tokens =
+                if ecosystem == Ecosystem::Npm { npm_hyphen_ranges(tokens) } else { tokens };
             // A branch with no tokens is an *absent* constraint, not an
             // unconstrained one. Silently treating it as "matches everything"
             // turns a blank range into a universal match, which is the wrong
